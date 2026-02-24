@@ -20,52 +20,47 @@ from config import (
 
 # ─── Constantes de layout (en puntos, origen abajo-izquierda) ────────
 # Página 1
+# Página 1
 HEADER_Y = PAGE_H - MARGIN_TOP
-HEADER_H = 22
+HEADER_H = 30
 
-# Zona cabecera: foto + mapa + resumen
+# Fila 1: Foto + Mapa Concello + Mapa Provincia
 PHOTO_X = MARGIN_LEFT
-PHOTO_Y = HEADER_Y - HEADER_H - 8 - 120
-PHOTO_W = 200
-PHOTO_H = 120
+PHOTO_W = 190
+PHOTO_H = 130
+PHOTO_Y = HEADER_Y - HEADER_H - PHOTO_H
 
-MAP_X = PHOTO_X + PHOTO_W + 20
+MAP_W = 120
+MAP_H = 130
+MAP_X = PHOTO_X + PHOTO_W + 10
 MAP_Y = PHOTO_Y
-MAP_W = 140
-MAP_H = 120
 
+PROV_W = 100
+PROV_H = 130
 PROV_X = MAP_X + MAP_W + 10
-PROV_Y = MAP_Y + 20
-PROV_W = 60
+PROV_Y = PHOTO_Y
 
-# Resumen anual
-SUMMARY_X = MARGIN_LEFT + CONTENT_W * 0.52
-SUMMARY_Y = PHOTO_Y - 10
-SUMMARY_W = CONTENT_W * 0.48
-SUMMARY_H = 200
-
-# Gráfica 1 (temperaturas)
+# Fila 2: Gráfica G1 + Tabla Resumen Anual
 G1_X = MARGIN_LEFT
-G1_Y = PHOTO_Y - 15 - 180
-G1_W = CONTENT_W * 0.50
-G1_H = 180
+G1_W = 280
+G1_H = 220
+G1_Y = PHOTO_Y - 15 - G1_H
 
-# Tabla resumen anual al lado de G1
-RS_X = MARGIN_LEFT + CONTENT_W * 0.52
+RS_X = MARGIN_LEFT + G1_W + 20
+RS_W = CONTENT_W - G1_W - 20
 RS_Y = G1_Y
-RS_W = CONTENT_W * 0.48
-RS_H = 180
+RS_H = G1_H
 
-# Gráficas 2 y 3
+# Gráficas G2 y G3
 G2_X = MARGIN_LEFT
-G2_Y = G1_Y - 15 - 175
-G2_W = CONTENT_W * 0.50
-G2_H = 175
+G2_W = 260
+G2_H = 180
+G2_Y = G1_Y - 15 - G2_H
 
-G3_X = MARGIN_LEFT + CONTENT_W * 0.52
+G3_X = RS_X
+G3_W = 260
+G3_H = 180
 G3_Y = G2_Y
-G3_W = CONTENT_W * 0.48
-G3_H = 175
 
 # Página 2: Rosas de viento
 G4_X = MARGIN_LEFT + 20
@@ -124,19 +119,13 @@ class FichaEstacionPDF:
     def _draw_header(self, info, subtitle=None):
         """Barra de título con nombre de estación."""
         c = self.c
-        y = HEADER_Y - HEADER_H
-
-        # Fondo gris
-        c.setFillColor(Color(*COLOR_HEADER_BG))
-        c.rect(MARGIN_LEFT, y, CONTENT_W, HEADER_H, fill=1, stroke=0)
-
-        # Texto
+        # Texto (sin fondo gris, según plantilla)
         c.setFillColor(Color(*COLOR_TITLE))
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Helvetica-Bold", 16)
         title = info.get("Estacion", "ESTACIÓN").upper()
         if subtitle:
             title += f"  {subtitle}"
-        c.drawCentredString(PAGE_W / 2, y + 6, title)
+        c.drawCentredString(PAGE_W / 2, HEADER_Y - 15, title)
 
     def _draw_station_photo(self, image_bytes):
         """Foto de la estación."""
@@ -163,28 +152,35 @@ class FichaEstacionPDF:
             img = ImageReader(io.BytesIO(ubi))
             c.drawImage(img, MAP_X, MAP_Y, MAP_W, MAP_H,
                         preserveAspectRatio=True, anchor='c')
-        else:
-            c.setStrokeColor(Color(0.7, 0.7, 0.7))
-            c.setFillColor(Color(0.95, 0.95, 0.95))
-            c.rect(MAP_X, MAP_Y, MAP_W, MAP_H, fill=1, stroke=1)
-            c.setFillColor(Color(0.5, 0.5, 0.5))
-            c.setFont("Helvetica", 9)
-            c.drawCentredString(MAP_X + MAP_W/2, MAP_Y + MAP_H/2,
-                                "Localización da estación")
+        
+        prov = province_images.get("provincia")
+        if prov:
+            img = ImageReader(io.BytesIO(prov))
+            c.drawImage(img, PROV_X, PROV_Y, PROV_W, PROV_H,
+                        preserveAspectRatio=True, anchor='c')
 
     def _draw_province_label(self, info):
-        """Nombre de provincia en vertical."""
+        """Nombre de provincia en vertical al lado del mapa de provincia."""
         c = self.c
-        provincia = info.get("Provincia", "")
+        provincia = info.get("Provincia", "").upper()
         if provincia:
             c.saveState()
-            c.setFont("Helvetica-Bold", 14)
-            c.setFillColor(Color(0.4, 0.4, 0.4))
-            c.translate(PROV_X + 15, PROV_Y)
+            c.setFont("Helvetica-Bold", 16)
+            c.setFillColor(Color(0.7, 0.7, 0.7)) # Gris claro como en la plantilla
+            # Posicionar a la derecha del mapa de provincia
+            text_x = PROV_X + PROV_W + 15
+            text_y = PROV_Y + PROV_H * 0.1
+            c.translate(text_x, text_y)
             c.rotate(90)
-            # Escribir cada carácter separado verticalmente
+            
+            # Escribir caracteres con espaciado amplio
+            spacing = 20
+            # Centrar la cadena en el eje vertical (que es el X tras rotar)
+            total_len = len(provincia) * spacing
+            start_off = (PROV_H - total_len) / 2
+            
             for i, ch in enumerate(provincia):
-                c.drawCentredString(i * 14, 0, ch)
+                c.drawString(start_off + i * spacing, 0, ch)
             c.restoreState()
 
     def _draw_chart(self, chart_io, x, y, w, h):
@@ -200,14 +196,14 @@ class FichaEstacionPDF:
         """Tabla RESUMO ANUAL con las variables anuales."""
         c = self.c
         x0 = RS_X
-        y_top = PHOTO_Y + PHOTO_H - 5  # Alinear con la parte superior de la foto
+        y_top = RS_Y + RS_H  # Alineado a la derecha de la gráfica G1
         w = RS_W
 
         # Título
-        c.setFont("Helvetica-Bold", 9)
+        c.setFont("Helvetica-Bold", 10)
         c.setFillColor(Color(*COLOR_TITLE))
-        c.drawString(x0, y_top, "RESUMO ANUAL")
-        y = y_top - 14
+        c.drawString(x0, y_top + 5, "RESUMO ANUAL")
+        y = y_top - 12
 
         # Filas de la tabla
         rows = self._get_summary_rows(summary)
@@ -240,10 +236,12 @@ class FichaEstacionPDF:
 
             y -= row_h
 
-        # Borde exterior
-        total_h = len(rows) * row_h + 4
+        # Borde exterior (punteado o continuo según estilo)
         c.setStrokeColor(Color(0.5, 0.5, 0.5))
-        c.rect(x0, y_top - total_h, w, total_h + 14, fill=0, stroke=1)
+        c.setDash(2, 2) # Punteado según plantilla
+        total_table_h = len(rows) * row_h
+        c.rect(x0, y_top - total_table_h, w, total_table_h, fill=0, stroke=1)
+        c.setDash() # Reset dash
 
     def _get_summary_rows(self, s):
         """Construye las filas de la tabla RESUMO ANUAL."""

@@ -17,10 +17,10 @@ def get_station_info(conn, id_estacion):
     sql = """
     SELECT
         E.idEstacion, E.Estacion, E.NombreCorto,
-        P.Provincia, C.Concello
+        P.NOME as Provincia, C.NOME as Concello
     FROM dbo.SysEstaciones E
     LEFT JOIN dbo.AuxConcellos C ON C.idConcello = E.lnConcello
-    LEFT JOIN dbo.AuxProvincias P ON P.idProvincia = C.lnProvincia
+    LEFT JOIN dbo.AuxProvincias P ON P.IdPROV = C.lnPROV
     WHERE E.idEstacion = ?
     """
     row = conn.execute(sql, id_estacion).fetchone()
@@ -43,18 +43,23 @@ def get_annual_summary(conn, id_estacion, year):
     
     # 1. Función de ayuda para ejecutar métricas individuales:
     def get_metric(parametro, funcion, tabla="DatosMensuales", aggr="AVG", extra_where=""):
+        # Determinar el nombre de la columna de fecha según la tabla
+        date_col = "InstanteLectura" if tabla == "Datos10minutales" else "FechaHora"
+        
         # Mapeo de aggr a función SQL real (AVG, MAX, MIN, SUM)
         sql = f"""
         SELECT {aggr}(D.Valor) as Val
         FROM dbo.{tabla} D
         INNER JOIN dbo.SysMedidas M ON M.idMedida = D.lnMedida
+        INNER JOIN dbo.SysSensores S ON S.idSensor = M.lnSensor
         INNER JOIN dbo.ListaMedidasTipo LMT ON LMT.idTipo = M.lnTipo
         INNER JOIN dbo.SysParametros P ON P.idParametro = LMT.lnParametro
         INNER JOIN dbo.ListaMedidasFunciones F ON F.idFuncion = LMT.lnFuncion
-        WHERE M.lnEstacion = ?
-          AND YEAR(D.FechaHora) = ?
+        WHERE S.lnEstacion = ?
+          AND YEAR(D.{date_col}) = ?
           AND P.Parametro = ?
           AND F.Funcion = ?
+          AND M.lnUso = 1
           {extra_where}
         """
         row = conn.execute(sql, id_estacion, year, parametro, funcion).fetchone()
@@ -62,17 +67,22 @@ def get_annual_summary(conn, id_estacion, year):
 
     # 2. Función para obtener un valor extremo y su fecha (TMAX, TMIN, PPMAX, GTMAX)
     def get_extreme_with_date(parametro, funcion, tabla="DatosDiarios", order="DESC"):
+        # Determinar el nombre de la columna de fecha según la tabla
+        date_col = "InstanteLectura" if tabla == "Datos10minutales" else "FechaHora"
+        
         sql = f"""
-        SELECT TOP 1 D.Valor, D.FechaHora
+        SELECT TOP 1 D.Valor, D.{date_col} as FechaHora
         FROM dbo.{tabla} D
         INNER JOIN dbo.SysMedidas M ON M.idMedida = D.lnMedida
+        INNER JOIN dbo.SysSensores S ON S.idSensor = M.lnSensor
         INNER JOIN dbo.ListaMedidasTipo LMT ON LMT.idTipo = M.lnTipo
         INNER JOIN dbo.SysParametros P ON P.idParametro = LMT.lnParametro
         INNER JOIN dbo.ListaMedidasFunciones F ON F.idFuncion = LMT.lnFuncion
-        WHERE M.lnEstacion = ?
-          AND YEAR(D.FechaHora) = ?
+        WHERE S.lnEstacion = ?
+          AND YEAR(D.{date_col}) = ?
           AND P.Parametro = ?
           AND F.Funcion = ?
+          AND M.lnUso = 1
         ORDER BY D.Valor {order}
         """
         row = conn.execute(sql, id_estacion, year, parametro, funcion).fetchone()
@@ -86,13 +96,15 @@ def get_annual_summary(conn, id_estacion, year):
         SELECT COUNT(*) as Dias
         FROM dbo.DatosDiarios D
         INNER JOIN dbo.SysMedidas M ON M.idMedida = D.lnMedida
+        INNER JOIN dbo.SysSensores S ON S.idSensor = M.lnSensor
         INNER JOIN dbo.ListaMedidasTipo LMT ON LMT.idTipo = M.lnTipo
         INNER JOIN dbo.SysParametros P ON P.idParametro = LMT.lnParametro
         INNER JOIN dbo.ListaMedidasFunciones F ON F.idFuncion = LMT.lnFuncion
-        WHERE M.lnEstacion = ?
+        WHERE S.lnEstacion = ?
           AND YEAR(D.FechaHora) = ?
           AND P.Parametro = ?
           AND F.Funcion = ?
+          AND M.lnUso = 1
           AND D.Valor {operator} {threshold}
         """
         row = conn.execute(sql, id_estacion, year, parametro, funcion).fetchone()
@@ -100,31 +112,31 @@ def get_annual_summary(conn, id_estacion, year):
 
     # Ejecutar métricas
     # Temperaturas
-    ta = get_metric('TA', 'Med', aggr="AVG")
-    tmaxmed = get_metric('TA', 'Max', aggr="AVG")
-    tminmed = get_metric('TA', 'Min', aggr="AVG")
+    ta = get_metric('TA', 'Avg', aggr="AVG")  # Cambiado 'Med' -> 'Avg'
+    tmaxmed = get_metric('TA', 'AvgMax', aggr="AVG") # Cambiado 'Max' -> 'AvgMax'
+    tminmed = get_metric('TA', 'AvgMin', aggr="AVG") # Cambiado 'Min' -> 'AvgMin'
     
     tmax, ftmax = get_extreme_with_date('TA', 'Max', order="DESC")
     tmin, ftmin = get_extreme_with_date('TA', 'Min', order="ASC")
     
     # Humedad
-    hrmed = get_metric('HR', 'Med', aggr="AVG")
+    hrmed = get_metric('HR', 'Avg', aggr="AVG") # Cambiado 'Med' -> 'Avg'
     
     # Precipitación
-    pp = get_metric('PP', 'Suma', tabla="DatosMensuales", aggr="SUM")
-    ppmax, fppmax = get_extreme_with_date('PP', 'Suma', tabla="DatosDiarios", order="DESC")
+    pp = get_metric('PP', 'SUM', tabla="DatosMensuales", aggr="SUM") # Suma -> SUM
+    ppmax, fppmax = get_extreme_with_date('PP', 'SUM', tabla="DatosDiarios", order="DESC")
     
     # Días de Lluvia y Helada
-    ndpp = count_days('PP', 'Suma', '>=', 0.1)
-    ndx = count_days('TA', 'Min', '<', 0)
+    ndpp = count_days('PP', 'SUM', '>=', 0.1)
+    ndx = count_days('TA', 'MIN', '<', 0)
     
     # Radiación / Sol
-    hsol = get_metric('HSOL', 'Suma', tabla="DatosMensuales", aggr="SUM")
-    ird = get_metric('RD', 'Med', aggr="AVG") # Suponiendo Parametro RD o IRD
+    hsol = get_metric('HSOL', 'SUM', tabla="DatosMensuales", aggr="SUM")
+    ird = get_metric('IRD', 'AVG', aggr="AVG") # Avg -> AVG
     
     # Viento
-    vv = get_metric('VV', 'Med', tabla="DatosMensuales", aggr="AVG")
-    gtmax, fgtmax = get_extreme_with_date('VV', 'Max', tabla="Datos10minutales", order="DESC")
+    vv = get_metric('VV', 'AVG', tabla="DatosMensuales", aggr="AVG") 
+    gtmax, fgtmax = get_extreme_with_date('VV', 'RACHA', tabla="Datos10minutales", order="DESC") # Max -> RACHA
 
     def rnd(val, decimals=1):
         if val is None: return None
@@ -168,13 +180,15 @@ def get_monthly_data(conn, id_estacion, year):
         SELECT MONTH(D.FechaHora) as Mes, {aggr}(D.Valor) as Val
         FROM dbo.{tabla} D
         INNER JOIN dbo.SysMedidas M ON M.idMedida = D.lnMedida
+        INNER JOIN dbo.SysSensores S ON S.idSensor = M.lnSensor
         INNER JOIN dbo.ListaMedidasTipo LMT ON LMT.idTipo = M.lnTipo
         INNER JOIN dbo.SysParametros P ON P.idParametro = LMT.lnParametro
         INNER JOIN dbo.ListaMedidasFunciones F ON F.idFuncion = LMT.lnFuncion
-        WHERE M.lnEstacion = ?
+        WHERE S.lnEstacion = ?
           AND YEAR(D.FechaHora) = ?
           AND P.Parametro = ?
           AND F.Funcion = ?
+          AND M.lnUso = 1
         GROUP BY MONTH(D.FechaHora)
         ORDER BY MONTH(D.FechaHora)
         """
@@ -191,13 +205,15 @@ def get_monthly_data(conn, id_estacion, year):
         SELECT MONTH(D.FechaHora) as Mes, COUNT(*) as Dias
         FROM dbo.DatosDiarios D
         INNER JOIN dbo.SysMedidas M ON M.idMedida = D.lnMedida
+        INNER JOIN dbo.SysSensores S ON S.idSensor = M.lnSensor
         INNER JOIN dbo.ListaMedidasTipo LMT ON LMT.idTipo = M.lnTipo
         INNER JOIN dbo.SysParametros P ON P.idParametro = LMT.lnParametro
         INNER JOIN dbo.ListaMedidasFunciones F ON F.idFuncion = LMT.lnFuncion
-        WHERE M.lnEstacion = ?
+        WHERE S.lnEstacion = ?
           AND YEAR(D.FechaHora) = ?
           AND P.Parametro = 'TA'
-          AND F.Funcion = 'Min'
+          AND F.Funcion = 'MIN'
+          AND M.lnUso = 1
           AND D.Valor < 0
         GROUP BY MONTH(D.FechaHora)
         ORDER BY MONTH(D.FechaHora)
@@ -215,13 +231,15 @@ def get_monthly_data(conn, id_estacion, year):
         sql = """
         SELECT VV.Valor as vv, DV.Valor as dv
         FROM dbo.Datos10minutales VV
-        INNER JOIN dbo.Datos10minutales DV ON VV.FechaHora = DV.FechaHora
+        INNER JOIN dbo.Datos10minutales DV ON VV.InstanteLectura = DV.InstanteLectura
         INNER JOIN dbo.SysMedidas M_VV ON M_VV.idMedida = VV.lnMedida
+        INNER JOIN dbo.SysSensores S_VV ON S_VV.idSensor = M_VV.lnSensor
         INNER JOIN dbo.ListaMedidasTipo T_VV ON T_VV.idTipo = M_VV.lnTipo
         INNER JOIN dbo.SysMedidas M_DV ON M_DV.idMedida = DV.lnMedida
+        INNER JOIN dbo.SysSensores S_DV ON S_DV.idSensor = M_DV.lnSensor
         INNER JOIN dbo.ListaMedidasTipo T_DV ON T_DV.idTipo = M_DV.lnTipo
-        WHERE M_VV.lnEstacion = ? AND M_DV.lnEstacion = ?
-          AND YEAR(VV.FechaHora) = ? AND YEAR(DV.FechaHora) = ?
+        WHERE S_VV.lnEstacion = ? AND S_DV.lnEstacion = ?
+          AND YEAR(VV.InstanteLectura) = ? AND YEAR(DV.InstanteLectura) = ?
           AND T_VV.lnParametro = 81 AND T_VV.lnFuncion = 1 AND T_VV.lnTipoIntervalo = 1 AND M_VV.lnUso = 1
           AND T_DV.lnParametro = 82 AND T_DV.lnFuncion = 1 AND T_DV.lnTipoIntervalo = 1 AND M_DV.lnUso = 1
           AND VV.lnCodigoValidacion <> 3 AND DV.lnCodigoValidacion <> 3
@@ -285,18 +303,18 @@ def get_monthly_data(conn, id_estacion, year):
 
     # Mapear los nombres de arrays que espera `charts.py`
     data = {
-        "tmax_med": get_12_months('TA', 'Max', aggr="AVG"),
-        "tmin_med": get_12_months('TA', 'Min', aggr="AVG"),
-        "tmax_abs": get_12_months('TA', 'Max', aggr="MAX"),
-        "tmin_abs": get_12_months('TA', 'Min', aggr="MIN"),
-        "ta_med": get_12_months('TA', 'Med', aggr="AVG"),
+        "tmax_med": get_12_months('TA', 'AvgMax', aggr="AVG"), # Medias de las máximas
+        "tmin_med": get_12_months('TA', 'AvgMin', aggr="AVG"), # Medias de las mínimas
+        "tmax_abs": get_12_months('TA', 'MAX', aggr="MAX"),
+        "tmin_abs": get_12_months('TA', 'MIN', aggr="MIN"),
+        "ta_med": get_12_months('TA', 'AVG', aggr="AVG"),      
         "helada": get_frost_days(),
-        "pp": get_12_months('PP', 'Suma', aggr="SUM"),
-        "bhc": get_12_months('BHC', 'Suma', aggr="SUM"),
-        "hr_med": get_12_months('HR', 'Med', aggr="AVG"),
-        "hr_max": get_12_months('HR', 'Max', aggr="MAX"),
-        "hr_min": get_12_months('HR', 'Min', aggr="MIN"),
-        "ins": get_12_months('INS', 'Med', aggr="AVG"),
+        "pp": get_12_months('PP', 'SUM', aggr="SUM"),
+        "bhc": get_12_months('BH', 'SUM', aggr="SUM"),        
+        "hr_med": get_12_months('HR', 'AVG', aggr="AVG"),      
+        "hr_max": get_12_months('HR', 'AVGMAX', aggr="MAX"),   
+        "hr_min": get_12_months('HR', 'AVGMIN', aggr="MIN"),   
+        "ins": get_12_months('INS', 'AVG', aggr="AVG"),        
         
         "wind_freq": wind_freq,
         "wind_speed": wind_speed,
