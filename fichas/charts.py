@@ -98,40 +98,69 @@ def chart_temperaturas(monthly):
 # ═══════════════════════════════════════════════════════════════════════
 def chart_precipitacion(monthly):
     """
-    Barras: PP mensual, balance hídrico
-    Línea (eje derecho): Tª media mensual
+    Barras lado a lado: PP mensual (azul oscuro) + balance hídrico (azul claro)
+    Meses BHC sin dato (-9999 → None) se marcan con barra gris rayada.
+    Línea (eje derecho): Tª media mensual.
     """
     fig, ax1 = plt.subplots(figsize=(4.8, 2.8))
     x = np.arange(12)
     width = 0.35
 
-    pp = _safe(monthly["pp"])
-    bhc = _safe(monthly.get("bhc", [0]*12))
+    pp_raw  = monthly.get("pp",  [None]*12)
+    bhc_raw = monthly.get("bhc", [None]*12)
 
-    ax1.bar(x - width/2, pp, width, color=COLOR_BAR_PP, label='PRECIPITACIÓN TOTAL')
-    ax1.bar(x + width/2, bhc, width, color=COLOR_BAR_BH, label='BALANCE HÍDRICO')
+    pp  = _safe(pp_raw)
+    bhc = _safe(bhc_raw)
+
+    # Barras de Precipitación (siempre azul oscuro)
+    ax1.bar(x - width/2, pp, width, color=(0.2, 0.2, 0.55), label='PRECIPITACIÓN TOTAL')
+
+    # Barras de BHC: dato válido → azul claro; sin dato → gris rayado
+    bhc_val   = [v if bhc_raw[i] is not None else np.nan for i, v in enumerate(bhc)]
+    bhc_nodat = [0 if bhc_raw[i] is None else np.nan for i in range(12)]
+
+    ax1.bar(x + width/2, bhc_val,   width, color=(0.45, 0.7, 0.9), label='BALANCE HÍDRICO')
+    ax1.bar(x + width/2, bhc_nodat, width, color='lightgrey', hatch='//', edgecolor='grey',
+            linewidth=0.5, label='SIN DATO (BH)')
 
     ax1.set_ylabel('(mm)')
     ax1.set_xticks(x)
     ax1.set_xticklabels(MESES_GL)
     ax1.grid(axis='y', alpha=0.3)
     ax1.axhline(y=0, color='gray', linewidth=0.5)
+    # Ticks mayores cada 100 mm, menores cada 50 mm
+    ax1.yaxis.set_major_locator(ticker.MultipleLocator(100))
+    ax1.yaxis.set_minor_locator(ticker.MultipleLocator(50))
+    ax1.tick_params(axis='y', which='minor', length=3, color='grey')
 
-    # Tª media en eje derecho
+    # Limitar eje Y para que no colapsen con posibles valores extremos
+    pp_valid  = [v for v in pp  if not np.isnan(v)]
+    bhc_valid = [v for v in bhc if not np.isnan(v)]
+    all_vals  = pp_valid + bhc_valid
+    if all_vals:
+        y_min = max(min(all_vals), -500)
+        y_max = max(max(all_vals) * 1.1, 50)
+        ax1.set_ylim(y_min, y_max)
+
+    # Tª media en eje derecho (rojo con círculos)
     ax2 = ax1.twinx()
     ta = _safe(monthly["ta_med"])
-    ax2.plot(x, ta, 'o-', color=COLOR_LINE_TMEDIA, markersize=4, linewidth=1.2, label='Tª MEDIA')
+    ax2.plot(x, ta, 'o-', color=COLOR_LINE_TMEDIA, markersize=4, linewidth=1.2, label='TªMEDIA')
     ax2.set_ylabel('TEMPERATURA (°C)')
+    ta_valid = [v for v in ta if not np.isnan(v)]
+    if ta_valid:
+        ax2.set_ylim(min(ta_valid) - 3, max(ta_valid) + 5)
 
-    # Leyenda combinada
+    # Leyenda combinada en la parte inferior
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2,
-               loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.25),
-               frameon=True, fancybox=True)
+               loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.30),
+               frameon=True, fancybox=True, fontsize=6)
 
     fig.tight_layout()
     return _to_bytesio(fig)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -175,45 +204,44 @@ def chart_humedad_insolacion(monthly):
 def chart_rosa_vientos(monthly):
     """
     Diagrama polar de barras: % de registros por cada dirección.
-    Muestra % calmas en el centro.
+    Calmas se muestra debajo del gráfico, no en el centro.
     """
-    fig = plt.figure(figsize=(3.5, 3.5))
+    fig = plt.figure(figsize=(3.5, 3.8))   # Ligeramente más alto para el texto inferior
     ax = fig.add_subplot(111, projection='polar')
 
-    freq = _safe(monthly["wind_freq"])
+    freq   = _safe(monthly["wind_freq"])
     calmas = monthly.get("calmas_pct", 0)
 
-    n_sectors = len(WIND_SECTORS)
-    # Ángulos: N=90°, NE=45°, E=0°, SE=315°... (sentido horario desde N)
-    # En coordenadas polares matplotlib: 0=E, π/2=N
-    # Convertimos: N→π/2, NE→π/4, E→0, SE→-π/4, S→-π/2, SO→-3π/4, O→π, NO→3π/4
+    n_sectors  = len(WIND_SECTORS)
     angles_deg = [90, 45, 0, 315, 270, 225, 180, 135]
     angles_rad = [math.radians(a) for a in angles_deg]
-
     width = 2 * math.pi / n_sectors * 0.7
 
-    bars = ax.bar(angles_rad, freq, width=width, color=COLOR_ROSA_VIENTO,
-                  alpha=0.8, edgecolor='white', linewidth=0.5)
+    ax.bar(angles_rad, freq, width=width, color=COLOR_ROSA_VIENTO,
+           alpha=0.8, edgecolor='white', linewidth=0.5)
 
-    # Etiquetas de dirección
     ax.set_thetagrids(angles_deg, WIND_SECTORS)
     ax.set_theta_zero_location('E')
 
-    # Escala radial
-    max_freq = max([f for f in freq if not np.isnan(f)] or [10])
+    # Escala radial: ticks mayores + subticks a la mitad
+    max_freq  = max([f for f in freq if not np.isnan(f)] or [10])
     tick_step = _nice_step(max_freq)
-    r_ticks = np.arange(tick_step, max_freq + tick_step, tick_step)
+    r_ticks   = np.arange(tick_step, max_freq + tick_step, tick_step)
     ax.set_rticks(r_ticks)
     ax.set_yticklabels([f'{int(t)}%' for t in r_ticks], fontsize=6)
-
-    # Calmas en el centro
-    ax.annotate(f'CALMAS\n{calmas:.2f}%',
-                xy=(0, 0), xycoords='data',
-                ha='center', va='center', fontsize=7, fontweight='bold')
+    # Subticks: círculos menores a la mitad del paso, sin etiqueta
+    minor_r = np.arange(tick_step / 2, max_freq + tick_step, tick_step)
+    for mr in minor_r:
+        theta = np.linspace(0, 2 * np.pi, 200)
+        ax.plot(theta, [mr] * 200, color='grey', linewidth=0.3, alpha=0.5, zorder=0)
 
     ax.set_title('ROSA DOS VENTOS', pad=15, fontsize=9, fontweight='bold')
 
-    fig.tight_layout()
+    # Calmas debajo del gráfico (centrado en la figura)
+    fig.text(0.5, 0.01, f'Calmas: {calmas:.2f}%',
+             ha='center', va='bottom', fontsize=8, fontweight='bold')
+
+    fig.tight_layout(rect=[0, 0.05, 1, 1])   # Reservar espacio inferior para el texto
     return _to_bytesio(fig)
 
 
@@ -222,35 +250,40 @@ def chart_rosa_vientos(monthly):
 # ═══════════════════════════════════════════════════════════════════════
 def chart_rosa_velocidad(monthly):
     """
-    Diagrama polar de barras: velocidad media (m/s) por dirección.
+    Diagrama polar de barras: velocidad media (km/h) por dirección.
     """
-    fig = plt.figure(figsize=(3.5, 3.5))
+    fig = plt.figure(figsize=(3.5, 3.8))
     ax = fig.add_subplot(111, projection='polar')
 
     speed = _safe(monthly["wind_speed"])
 
-    n_sectors = len(WIND_SECTORS)
+    n_sectors  = len(WIND_SECTORS)
     angles_deg = [90, 45, 0, 315, 270, 225, 180, 135]
     angles_rad = [math.radians(a) for a in angles_deg]
-
     width = 2 * math.pi / n_sectors * 0.7
 
-    bars = ax.bar(angles_rad, speed, width=width, color=COLOR_ROSA_VELOCIDAD,
-                  alpha=0.8, edgecolor='white', linewidth=0.5)
+    ax.bar(angles_rad, speed, width=width, color=COLOR_ROSA_VELOCIDAD,
+           alpha=0.8, edgecolor='white', linewidth=0.5)
 
     ax.set_thetagrids(angles_deg, WIND_SECTORS)
     ax.set_theta_zero_location('E')
 
+    # Escala radial: ticks mayores + subticks a la mitad del paso
     max_speed = max([s for s in speed if not np.isnan(s)] or [5])
     tick_step = _nice_step(max_speed)
-    r_ticks = np.arange(tick_step, max_speed + tick_step, tick_step)
+    r_ticks   = np.arange(tick_step, max_speed + tick_step, tick_step)
     ax.set_rticks(r_ticks)
     ax.set_yticklabels([f'{t:.0f}' for t in r_ticks], fontsize=6)
+    # Subticks a la mitad
+    minor_r = np.arange(tick_step / 2, max_speed + tick_step, tick_step)
+    for mr in minor_r:
+        theta = np.linspace(0, 2 * np.pi, 200)
+        ax.plot(theta, [mr] * 200, color='grey', linewidth=0.3, alpha=0.5, zorder=0)
 
-    ax.set_title('VELOCIDADE MEDIA DO VENTO EN CADA DIRECCIÓN (m/s)',
-                 pad=15, fontsize=7, fontweight='bold')
+    ax.set_title('VELOCIDADE MEDIA DO VENTO EN CADA DIRECCIÓN (km/h)',
+                 pad=15, fontsize=9, fontweight='bold')
 
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0.02, 1, 1])
     return _to_bytesio(fig)
 
 

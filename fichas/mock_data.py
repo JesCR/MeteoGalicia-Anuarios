@@ -18,9 +18,9 @@ def get_station_info_mock():
         "NombreCorto": "CIS Ferrol",
         "Provincia": "A CORUÑA",
         "Concello": "Ferrol",
-        "Altitud": 38.0,
-        "Latitud": 43.4833,
-        "Longitud": -8.2333,
+        "Alt": 38.0,
+        "Lat": 43.48330,
+        "Lon": -8.23330,
     }
 
 
