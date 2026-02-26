@@ -86,10 +86,10 @@ def chart_temperaturas(monthly):
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2,
-               loc='lower center', ncol=5, bbox_to_anchor=(0.5, -0.25),
+               loc='lower center', ncol=5, bbox_to_anchor=(0.5, -0.28),
                frameon=True, fancybox=True)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.98])
     return _to_bytesio(fig)
 
 
@@ -155,10 +155,10 @@ def chart_precipitacion(monthly):
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2,
-               loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.30),
+               loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.32),
                frameon=True, fancybox=True, fontsize=6)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.98])
     return _to_bytesio(fig)
 
 
@@ -191,10 +191,10 @@ def chart_humedad_insolacion(monthly):
     ax1.plot(x, _safe(monthly["hr_min"]), 'd-', color=COLOR_LINE_HRMIN,
              markersize=3, linewidth=0.8, label='MIN MED')
 
-    ax1.legend(loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.25),
+    ax1.legend(loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.28),
                frameon=True, fancybox=True)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.98])
     return _to_bytesio(fig)
 
 
@@ -283,7 +283,8 @@ def chart_rosa_velocidad(monthly):
     ax.set_title('VELOCIDADE MEDIA DO VENTO EN CADA DIRECCIÓN (km/h)',
                  pad=15, fontsize=9, fontweight='bold')
 
-    fig.tight_layout(rect=[0, 0.02, 1, 1])
+    # Usamos el mismo rect que en Rosa de Vientos para que queden alineadas
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
     return _to_bytesio(fig)
 
 

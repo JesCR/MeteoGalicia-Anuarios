@@ -12,6 +12,13 @@ def get_connection():
     return pyodbc.connect(get_connection_string())
 
 
+def get_active_stations(conn):
+    """Obtiene la lista de IDs de estaciones en servicio del subred 102."""
+    sql = "SELECT idEstacion FROM dbo.SysEstaciones WHERE enServicio = 1 AND lnSubred = 102"
+    rows = conn.execute(sql).fetchall()
+    return [row.idEstacion for row in rows]
+
+
 def get_station_info(conn, id_estacion):
     """Información básica de la estación."""
     sql = """

@@ -23,38 +23,45 @@ from config import (
 HEADER_Y = PAGE_H - MARGIN_TOP
 HEADER_H = 30
 
+# ─── Fila 0 (Header Principal): Logo MeteoGalicia y Consellería ────────
+# Coordenadas relativas al borde superior
+MAIN_HEADER_Y = PAGE_H - 15
+LOGO_W = 140
+LOGO_H = 32
+# Desplazamiento a la izquierda para que visualmente empiece con el texto
+LOGO_X = MARGIN_LEFT - 12
+TEXT_XUNTA_FONT_SIZE = 8
+
 # ─── Fila 1 (Fila Superior): 4 columnas de izquierda a derecha ──────
 # Anchura disponible: PAGE_W - MARGIN_LEFT - MARGIN_RIGHT = ~539 pts
-# Col1 (Logo prov): 90pts | Col2 (Foto): 155pts | Col3 (Texto): 155pts | Col4 (Mapa): 125pts
-# con 6pts de separación entre columnas.
-ROW1_Y    = 640   # Coordenada Y del borde inferior de la fila
-ROW1_H    = 140   # Altura de la fila
+# Col1 (Foto): 155pts | Col2 (Texto): 165pts | Col3 (Mapa): 120pts | Col4 (Escudo): 75pts
+ROW1_TOP_Y = 770  # Techo común para toda la fila
+ROW1_H     = 140   # Altura de la fila
+ROW1_Y     = ROW1_TOP_Y - ROW1_H 
 
 GAP = 6   # Separación entre columnas
 
-# Col 1: Logo/imagen de provincia (izquierda, pegado al margen)
-PROV_W = 90
-PROV_H = ROW1_H
-PROV_X = MARGIN_LEFT
-PROV_Y = ROW1_Y
-
-# Col 2: Foto de la estación
+# Col 1: Foto de la estación (Ahora a la izquierda)
 PHOTO_W = 155
 PHOTO_H = ROW1_H
-PHOTO_X = PROV_X + PROV_W + GAP
-PHOTO_Y = ROW1_Y
+PHOTO_X = MARGIN_LEFT
 
-# Col 3: Texto con info de la estación (+8 pts extra para no cortar texto)
-TEXT_COL_W = 163
+# Col 2: Texto con info de la estación
+TEXT_COL_W = 165
 TEXT_X = PHOTO_X + PHOTO_W + GAP
-TEXT_Y = ROW1_Y + ROW1_H  # Texto arranca desde el borde superior de la fila
+# Alineamos con el techo (bajando 10pts para que el 'top' de la letra toque la línea)
+TEXT_Y = ROW1_TOP_Y - 10
 
-# Col 4: Mapa del concello con punto rojo (derecha, pegado al margen)
-MAP_W = PAGE_W - MARGIN_RIGHT - (TEXT_X + TEXT_COL_W + GAP)
-MAP_W = max(MAP_W, 120)
+# Col 3: Mapa del concello con punto rojo
+MAP_W = 120
 MAP_H = ROW1_H
-MAP_X = PAGE_W - MARGIN_RIGHT - MAP_W
-MAP_Y = ROW1_Y
+MAP_X = TEXT_X + TEXT_COL_W + GAP
+
+# Col 4: Logo/imagen de provincia (Vertical, ahora al final)
+PROV_W = 75   # Lo estrechamos un poco para que quepa bien al final
+PROV_H = 150
+PROV_X = PAGE_W - MARGIN_RIGHT - PROV_W
+PROV_Y = ROW1_TOP_Y - PROV_H
 
 # G1 y tabla RESUMO ANUAL alineados verticalmente
 G1_X = MARGIN_LEFT - 10
@@ -121,6 +128,8 @@ class FichaEstacionPDF:
         province_images = province_images or {}
 
         # ═══ PÁGINA ÚNICA ═══
+        self._draw_main_header()
+        
         self._draw_header(station_info)
         self._draw_station_photo(station_image_bytes)
         self._draw_map(province_images)
@@ -134,13 +143,40 @@ class FichaEstacionPDF:
         self._draw_chart(charts_io['g3'], G3_X, G3_Y, G3_W, G3_H)
 
         # Fila 4
-        self._draw_chart(charts_io['g4'], G4_X, G4_Y, G4_W, G4_H)
-        self._draw_chart(charts_io['g5'], G5_X, G5_Y, G5_W, G5_H)
+        if charts_io.get('g4'):
+            self._draw_chart(charts_io['g4'], G4_X, G4_Y, G4_W, G4_H)
+        if charts_io.get('g5'):
+            self._draw_chart(charts_io['g5'], G5_X, G5_Y, G5_W, G5_H)
 
         self._draw_footer()
         self.c.save()
 
     # ─── Dibujo de componentes ────────────────────────────────────────
+
+    def _draw_main_header(self):
+        """Dibuja el logo de MeteoGalicia y el texto de la Consellería en el tope."""
+        c = self.c
+        import os
+        from config import BASE_DIR
+        
+        # Logo MeteoGalicia
+        logo_path = os.path.join(BASE_DIR, "logos", "METEOGALICIA_logo.jpg")
+        if os.path.exists(logo_path):
+            img = ImageReader(logo_path)
+            # Dibujamos el logo desplazado a la izquierda.
+            c.drawImage(img, LOGO_X, MAIN_HEADER_Y - LOGO_H, LOGO_W, LOGO_H, 
+                        mask='auto', preserveAspectRatio=True)
+        
+        # Texto de la Consellería justo debajo del logo
+        c.setFillColor(black)
+        c.setFont("Helvetica", TEXT_XUNTA_FONT_SIZE)
+        text_y = MAIN_HEADER_Y - LOGO_H - 10
+        text_xunta = "Consellería de Medio Ambiente, Territorio e Infraestruturas - Xunta de Galicia"
+        c.drawString(MARGIN_LEFT, text_y, text_xunta)
+        
+        # Línea decorativa opcional o separación
+        # c.setStrokeColor(HexColor("#005a9c"))
+        # c.line(MARGIN_LEFT, text_y - 4, PAGE_W - MARGIN_RIGHT, text_y - 4)
 
     def _draw_header(self, info):
         """Bloque de texto con nombre de estación y coordenadas (Col 3)."""
@@ -196,15 +232,16 @@ class FichaEstacionPDF:
         c = self.c
         if image_bytes:
             img = ImageReader(io.BytesIO(image_bytes))
-            c.drawImage(img, PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H,
-                        preserveAspectRatio=True, anchor='c')
+            # Alineamos al top (anchor='n') usando ROW1_TOP_Y
+            c.drawImage(img, PHOTO_X, ROW1_TOP_Y - PHOTO_H, PHOTO_W, PHOTO_H,
+                        preserveAspectRatio=True, anchor='n')
         else:
             # Placeholder
             c.setStrokeColor(Color(0.7, 0.7, 0.7))
             c.setFillColor(Color(0.95, 0.95, 0.95))
-            c.rect(PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H, fill=1, stroke=1)
+            c.rect(PHOTO_X, ROW1_TOP_Y - PHOTO_H, PHOTO_W, PHOTO_H, fill=1, stroke=1)
             c.setFont("Helvetica-Bold", 8)
-            c.drawCentredString(PHOTO_X + PHOTO_W/2, PHOTO_Y + PHOTO_H/2,
+            c.drawCentredString(PHOTO_X + PHOTO_W/2, ROW1_TOP_Y - 40,
                                 "Fotografía da estación")
 
     def _draw_map(self, province_images):
@@ -213,14 +250,16 @@ class FichaEstacionPDF:
         ubi = province_images.get("ubicacion")
         if ubi:
             img = ImageReader(io.BytesIO(ubi))
-            c.drawImage(img, MAP_X, MAP_Y, MAP_W, MAP_H,
-                        preserveAspectRatio=True, anchor='c')
+            # Alineamos al top (anchor='n') usando ROW1_TOP_Y
+            c.drawImage(img, MAP_X, ROW1_TOP_Y - MAP_H, MAP_W, MAP_H,
+                        preserveAspectRatio=True, anchor='n')
         
         prov = province_images.get("provincia")
         if prov:
             img = ImageReader(io.BytesIO(prov))
-            c.drawImage(img, PROV_X, PROV_Y, PROV_W, PROV_H,
-                        preserveAspectRatio=True, anchor='c')
+            # El escudo de provincia también alineado al techo
+            c.drawImage(img, PROV_X, ROW1_TOP_Y - PROV_H, PROV_W, PROV_H,
+                        preserveAspectRatio=True, anchor='n')
 
     def _draw_chart(self, chart_io, x, y, w, h):
         """Incrusta una gráfica PNG en la posición indicada."""
