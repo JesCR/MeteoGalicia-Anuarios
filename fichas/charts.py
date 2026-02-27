@@ -199,93 +199,81 @@ def chart_humedad_insolacion(monthly):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# GRÁFICA 4: Rosa de vientos (frecuencia por dirección)
+# GRÁFICA 4: Rosa de vientos (Frecuencia por fuerza en cada dirección)
 # ═══════════════════════════════════════════════════════════════════════
 def chart_rosa_vientos(monthly):
     """
-    Diagrama polar de barras: % de registros por cada dirección.
-    Calmas se muestra debajo del gráfico, no en el centro.
+    Diagrama polar de barras apiladas: % de registros por cada dirección y
+    clase de intensidad, calculados desde datos 10-minutales.
     """
-    fig = plt.figure(figsize=(3.5, 3.8))   # Ligeramente más alto para el texto inferior
+    # Aumentamos un poco el tamaño para acomodar la leyenda a la izquierda
+    fig = plt.figure(figsize=(4.5, 4.4))
     ax = fig.add_subplot(111, projection='polar')
 
-    freq   = _safe(monthly["wind_freq"])
-    calmas = monthly.get("calmas_pct", 0)
+    wind_rose = monthly.get("wind_rose", {})
+    matrix = wind_rose.get("matrix", {})
+    calmas = wind_rose.get("calmas_pct", 0)
+
+    force_keys   = ["frouxos", "moderados", "fortes", "moi_fortes"]
+    force_labels = ["Frouxo", "Moderado", "Forte", "Moi forte"]
+    force_colors = ["#fcf45d", "#76d73f", "#7289da", "#e25c34"]
 
     n_sectors  = len(WIND_SECTORS)
     angles_deg = [90, 45, 0, 315, 270, 225, 180, 135]
     angles_rad = [math.radians(a) for a in angles_deg]
-    width = 2 * math.pi / n_sectors * 0.7
+    width      = 2 * math.pi / n_sectors * 0.7
 
-    ax.bar(angles_rad, freq, width=width, color=COLOR_ROSA_VIENTO,
-           alpha=0.8, edgecolor='white', linewidth=0.5)
+    bottom = np.zeros(n_sectors)
 
-    ax.set_thetagrids(angles_deg, WIND_SECTORS)
-    ax.set_theta_zero_location('E')
+    for i, force in enumerate(force_keys):
+        vals = []
+        for sec in WIND_SECTORS:
+            vals.append(matrix.get(sec, {}).get(force, 0))
 
-    # Escala radial: ticks mayores + subticks a la mitad
-    max_freq  = max([f for f in freq if not np.isnan(f)] or [10])
-    tick_step = _nice_step(max_freq)
-    r_ticks   = np.arange(tick_step, max_freq + tick_step, tick_step)
-    ax.set_rticks(r_ticks)
-    ax.set_yticklabels([f'{int(t)}%' for t in r_ticks], fontsize=6)
-    # Subticks: círculos menores a la mitad del paso, sin etiqueta
-    minor_r = np.arange(tick_step / 2, max_freq + tick_step, tick_step)
-    for mr in minor_r:
-        theta = np.linspace(0, 2 * np.pi, 200)
-        ax.plot(theta, [mr] * 200, color='grey', linewidth=0.3, alpha=0.5, zorder=0)
+        total_pct = sum(vals)
+        lbl = f"{force_labels[i]}: {total_pct:.1f}%"
 
-    ax.set_title('ROSA DOS VENTOS', pad=15, fontsize=9, fontweight='bold')
+        ax.bar(angles_rad, vals, width=width, bottom=bottom,
+               color=force_colors[i], edgecolor='black', linewidth=0.4,
+               label=lbl)
 
-    # Calmas debajo del gráfico (centrado en la figura)
-    fig.text(0.5, 0.01, f'Calmas: {calmas:.2f}%',
-             ha='center', va='bottom', fontsize=8, fontweight='bold')
-
-    fig.tight_layout(rect=[0, 0.05, 1, 1])   # Reservar espacio inferior para el texto
-    return _to_bytesio(fig)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# GRÁFICA 5: Rosa de velocidad media por dirección
-# ═══════════════════════════════════════════════════════════════════════
-def chart_rosa_velocidad(monthly):
-    """
-    Diagrama polar de barras: velocidad media (km/h) por dirección.
-    """
-    fig = plt.figure(figsize=(3.5, 3.8))
-    ax = fig.add_subplot(111, projection='polar')
-
-    speed = _safe(monthly["wind_speed"])
-
-    n_sectors  = len(WIND_SECTORS)
-    angles_deg = [90, 45, 0, 315, 270, 225, 180, 135]
-    angles_rad = [math.radians(a) for a in angles_deg]
-    width = 2 * math.pi / n_sectors * 0.7
-
-    ax.bar(angles_rad, speed, width=width, color=COLOR_ROSA_VELOCIDAD,
-           alpha=0.8, edgecolor='white', linewidth=0.5)
+        bottom += np.array(vals)
 
     ax.set_thetagrids(angles_deg, WIND_SECTORS)
     ax.set_theta_zero_location('E')
 
-    # Escala radial: ticks mayores + subticks a la mitad del paso
-    max_speed = max([s for s in speed if not np.isnan(s)] or [5])
-    tick_step = _nice_step(max_speed)
-    r_ticks   = np.arange(tick_step, max_speed + tick_step, tick_step)
-    ax.set_rticks(r_ticks)
-    ax.set_yticklabels([f'{t:.0f}' for t in r_ticks], fontsize=6)
-    # Subticks a la mitad
-    minor_r = np.arange(tick_step / 2, max_speed + tick_step, tick_step)
-    for mr in minor_r:
-        theta = np.linspace(0, 2 * np.pi, 200)
-        ax.plot(theta, [mr] * 200, color='grey', linewidth=0.3, alpha=0.5, zorder=0)
+    # 1. Escala radial dinámica (próximo múltiplo de 10)
+    max_val = max(bottom) if len(bottom) > 0 else 5
+    limit = math.ceil(max_val / 10) * 10
+    if limit < 10: limit = 10
 
-    ax.set_title('VELOCIDADE MEDIA DO VENTO EN CADA DIRECCIÓN (km/h)',
-                 pad=15, fontsize=9, fontweight='bold')
+    ax.set_ylim(0, limit)
+    
+    # 2. Rejilla: Sólida en decenas, punteada en unidades de 5
+    ticks_10 = np.arange(10, limit + 1, 10)
+    ticks_5  = np.arange(5, limit + 1, 10)
+    
+    ax.set_rticks(ticks_10)
+    ax.set_yticklabels([f'{t:.0f}%' for t in ticks_10], fontsize=7)
+    
+    # Dibujar manualmente las líneas de 5, 15... (rejilla dashed)
+    ax.grid(True, which='major', axis='y', linestyle='-', color='#dddddd', alpha=0.8)
+    for t5 in ticks_5:
+        ax.plot(np.linspace(0, 2*np.pi, 100), [t5]*100, color='#eeeeee', 
+                linestyle='--', linewidth=0.5, zorder=0)
 
-    # Usamos el mismo rect que en Rosa de Vientos para que queden alineadas
-    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    # 3. Leyenda a la izquierda (todavía más desplazada)
+    ax.legend(loc='upper left', bbox_to_anchor=(-0.55, 1.1),
+              fontsize=8, frameon=False)
+
+    # 4. Calmas (Centradas, más grandes, peso normal)
+    # Ajustamos la posición horizontal para asegurar centrado visual respecto al círculo
+    fig.text(0.48, 0.05, f"Calmas: {calmas:.0f}%",
+             ha='center', va='bottom', fontsize=10, fontweight='normal')
+
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
     return _to_bytesio(fig)
+
 
 
 # ─── Utilidades ───────────────────────────────────────────────────────

@@ -90,33 +90,33 @@ G3_W = 245                # Más estrecha → misma escala visual que G2
 G3_H = 170
 G3_Y = ROW3_Y
 
-# Fila 4: Rosas de viento
-ROW4_Y = 90
-ROW4_H = 170
+# Fila 4: Rosa de viento y tablas auxiliares
+ROW4_Y = 110
+ROW4_H = 160
 
-G4_X = MARGIN_LEFT + 10
-G4_W = 250
-G4_H = 180
+G4_X = MARGIN_LEFT - 10
+G4_W = 280
+G4_H = 170
 G4_Y = ROW4_Y
 
-G5_X = PAGE_W / 2 + 10
-G5_W = 250
-G5_H = 180
-G5_Y = ROW4_Y
+WT_X = G4_X + G4_W + 10
+WT_W = PAGE_W - MARGIN_RIGHT - WT_X
+WT_Y = G4_Y
 
 
 class FichaEstacionPDF:
     """Genera el PDF de ficha de estación."""
 
-    def __init__(self, output_path):
+    def __init__(self, output_path, start_page=1):
         self.output_path = output_path
         self.c = canvas.Canvas(output_path, pagesize=A4)
         self.c.setTitle("Ficha de Estación Meteorológica")
+        self.current_page = start_page
 
-    def generate(self, station_info, annual_summary, charts_io,
-                 station_image_bytes=None, province_images=None):
+    def add_station_page(self, station_info, annual_summary, charts_io,
+                         station_image_bytes=None, province_images=None):
         """
-        Genera el PDF completo.
+        Añade una página de ficha de estación al PDF.
 
         Args:
             station_info: dict con nombre, provincia, etc.
@@ -127,7 +127,7 @@ class FichaEstacionPDF:
         """
         province_images = province_images or {}
 
-        # ═══ PÁGINA ÚNICA ═══
+        # ═══ DIBUJO DE COMPONENTES ═══
         self._draw_main_header()
         
         self._draw_header(station_info)
@@ -145,10 +145,18 @@ class FichaEstacionPDF:
         # Fila 4
         if charts_io.get('g4'):
             self._draw_chart(charts_io['g4'], G4_X, G4_Y, G4_W, G4_H)
-        if charts_io.get('g5'):
-            self._draw_chart(charts_io['g5'], G5_X, G5_Y, G5_W, G5_H)
+            # Dibujar tablas de viento a la derecha de la rosa
+            wind_summary = annual_summary.get("wind_summary", {})
+            self._draw_wind_tables(wind_summary)
 
         self._draw_footer()
+        
+        # Finalizar página y preparar la siguiente
+        self.c.showPage()
+        self.current_page += 1
+
+    def save(self):
+        """Guarda el archivo PDF."""
         self.c.save()
 
     # ─── Dibujo de componentes ────────────────────────────────────────
@@ -313,10 +321,10 @@ class FichaEstacionPDF:
         c.setFillColor(HexColor("#0077b6")) # Azul Meteogalicia aprox.
         c.rect(MARGIN_LEFT, 40, PAGE_W - MARGIN_LEFT - MARGIN_RIGHT, 25, fill=1, stroke=0)
         
-        # Número de página (ejemplo 85)
+        # Número de página
         c.setFillColor(white)
         c.setFont("Helvetica-Bold", 16)
-        c.drawString(MARGIN_LEFT + 15, 47, "85")
+        c.drawString(MARGIN_LEFT + 15, 47, str(self.current_page))
 
     def _get_summary_rows(self, s):
         """Construye las filas de la tabla RESUMO ANUAL."""
@@ -343,3 +351,45 @@ class FichaEstacionPDF:
             ("Velocidade media vento:", fmt(s.get("VV")),      "km/h", ""),
             ("Refacho máximo diario:", fmt(s.get("GT")),       "km/h", s.get("FGTMAX", "")),
         ]
+
+    def _draw_wind_tables(self, ws):
+        """Dibuja tablas de velocidades y direcciones a la derecha de la rosa."""
+        c = self.c
+        if not ws: return
+        
+        from config import WIND_SECTORS
+        
+        y_top = WT_Y + ROW4_H - 10
+        row_h = 13
+        
+        # 1. Tabla de Velocidades Promedio (VXX)
+        curr_y = y_top
+        c.setFont("Helvetica-Bold", 8.5)
+        c.setFillColor(black)
+        c.drawString(WT_X, curr_y, "VELOCIDADES MEDIAS")
+        c.drawString(WT_X, curr_y - 11, "POR SECTOR (km/h)")
+        curr_y -= 28
+        
+        c.setFont("Helvetica", 8)
+        speeds = ws.get("velocidades", {})
+        for sec in WIND_SECTORS:
+            val = speeds.get(sec, 0)
+            c.drawString(WT_X + 5, curr_y, f"{sec}:")
+            c.drawRightString(WT_X + 75, curr_y, f"{val:.1f}")
+            curr_y -= row_h
+            
+        # 2. Tabla de Direcciones Promedio (DXX)
+        curr_y = y_top
+        tab2_x = WT_X + 130 # Ajustamos un poco para centrar bajo los dos bloques
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawString(tab2_x, curr_y, "DIRECCIÓN MEDIA")
+        c.drawString(tab2_x, curr_y - 11, "POR SECTOR (º)")
+        curr_y -= 28
+        
+        c.setFont("Helvetica", 8)
+        dirs = ws.get("direcciones", {})
+        for sec in WIND_SECTORS:
+            val = dirs.get(sec, 0)
+            c.drawString(tab2_x + 5, curr_y, f"{sec}:")
+            c.drawRightString(tab2_x + 65, curr_y, f"{val:.1f}")
+            curr_y -= row_h

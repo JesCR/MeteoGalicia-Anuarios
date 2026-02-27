@@ -4,6 +4,7 @@ Consultas SQL contra MeteoDatos para obtener datos de fichas de estación.
 """
 
 import pyodbc
+import time
 from config import get_connection_string
 
 
@@ -300,105 +301,105 @@ def get_monthly_data(conn, id_estacion, year):
                 arr[r.Mes - 1] = round(float(r.Val), 1)
         return arr
 
-    def get_wind_rose():
-        # Consultamos pares de datos Viento/Dirección cruzando Datos10minutales por FechaHora
-        # y filtrando por los IDs que usa MeteoDatos (81=Velocidad, 82=Dirección).
-        sql = """
-        SELECT VV.Valor as vv, DV.Valor as dv
-        FROM dbo.Datos10minutales VV
-        INNER JOIN dbo.Datos10minutales DV ON VV.InstanteLectura = DV.InstanteLectura
-        INNER JOIN dbo.SysMedidas M_VV ON M_VV.idMedida = VV.lnMedida
-        INNER JOIN dbo.SysSensores S_VV ON S_VV.idSensor = M_VV.lnSensor
-        INNER JOIN dbo.ListaMedidasTipo T_VV ON T_VV.idTipo = M_VV.lnTipo
-        INNER JOIN dbo.SysMedidas M_DV ON M_DV.idMedida = DV.lnMedida
-        INNER JOIN dbo.SysSensores S_DV ON S_DV.idSensor = M_DV.lnSensor
-        INNER JOIN dbo.ListaMedidasTipo T_DV ON T_DV.idTipo = M_DV.lnTipo
-        WHERE S_VV.lnEstacion = ? AND S_DV.lnEstacion = ?
-          AND YEAR(VV.InstanteLectura) = ? AND YEAR(DV.InstanteLectura) = ?
-          AND T_VV.lnParametro = 81 AND T_VV.lnFuncion = 1 AND T_VV.lnTipoIntervalo = 1 AND M_VV.lnUso = 1
-          AND T_DV.lnParametro = 82 AND T_DV.lnFuncion = 1 AND T_DV.lnTipoIntervalo = 1 AND M_DV.lnUso = 1
-          AND VV.lnCodigoValidacion <> 3 AND DV.lnCodigoValidacion <> 3
-          AND T_VV.lnAltura = T_DV.lnAltura
+    def get_wind_summary():
         """
-        rows = conn.execute(sql, id_estacion, id_estacion, year, year).fetchall()
+        Obtiene el resumen de viento (frecuencias por fuerza, velocidades y direcciones)
+        consultando directamente DatosMensuales con parámetros pre-calculados (30000+).
+        """
+        sql = """
+        SELECT m.Parametro, ISNULL(ROUND(AVG(d.Valor), 2), -9999) as Valor
+        FROM dbo.DatosMensuales d 
+        INNER JOIN dbo.VIDX_AyudaMedidas_NOEXPAND m ON d.lnMedida = m.idMedida
+        WHERE m.idEstacion = ? 
+          AND m.idTipoIntervalo = 5 
+          AND m.idParametro >= 30000
+          AND d.FechaHora >= ? 
+          AND d.FechaHora < ?
+          AND d.lnCodigoValidacion <> 9
+          AND d.lnCodigoValidacion <> 3
+          AND d.Valor <> -9999
+        GROUP BY m.Parametro
+        """
+        start_date = f"{year}-01-01"
+        end_date = f"{year+1}-01-01"
+        rows = conn.execute(sql, id_estacion, start_date, end_date).fetchall()
         
-        # Array inicial de 8 sectores (N, NE, E, SE, S, SO, O, NO)
-        freq = [0] * 8
-        speed = [0] * 8
-        calmas_pct = 0
+        # Estructura de salida
+        wind_data = {
+            "calmas": 0,
+            "frecuencias": {}, # {sector: {fuerza: valor}}
+            "velocidades": {}, # {sector: valor}
+            "direcciones": {}  # {sector: valor}
+        }
         
-        if not rows:
-            return freq, speed, calmas_pct
+        mapping = {
+            "NN": "N", "NE": "NE", "EE": "E", "SE": "SE",
+            "SS": "S", "SO": "SO", "OO": "O", "NO": "NO"
+        }
+        forces = {"FR": "frouxos", "MO": "moderados", "FO": "fortes", "MF": "moi_fortes"}
+        
+        for r in rows:
+            p = r.Parametro.strip()
+            v = float(r.Valor)
+            if v == -9999: continue
             
-        # Filtrar valores válidos
-        valid_rows = [r for r in rows if r.vv is not None and r.dv is not None and r.vv != -9999 and r.dv != -9999]
-        total_datos = len(valid_rows)
-        
-        if total_datos == 0:
-            return freq, speed, calmas_pct
-            
-        # Contar calmas (viento <= 1.5 m/s)
-        calmas_list = [r for r in valid_rows if r.vv <= 1.5]
-        viento_list = [r for r in valid_rows if r.vv > 1.5]
-        
-        calmas_pct = round((len(calmas_list) / total_datos) * 100, 1)
-        
-        sectores_count = [0] * 8
-        sectores_vv_sum = [0] * 8
-        
-        for r in viento_list:
-            dv = float(r.dv)
-            vv = float(r.vv)
-            
-            # Clasificación de la dirección en 8 sectores (45º cada uno)
-            if dv >= 338 or dv < 23: idx = 0      # N
-            elif 23 <= dv < 68:      idx = 1      # NE
-            elif 68 <= dv < 113:     idx = 2      # E
-            elif 113 <= dv < 158:    idx = 3      # SE
-            elif 158 <= dv < 203:    idx = 4      # S
-            elif 203 <= dv < 248:    idx = 5      # SO
-            elif 248 <= dv < 293:    idx = 6      # O
-            elif 293 <= dv < 338:    idx = 7      # NO
-            else: continue
-            
-            sectores_count[idx] += 1
-            sectores_vv_sum[idx] += vv
-            
-        total_viento = len(viento_list)
-        
-        for i in range(8):
-            if total_viento > 0:
-                freq[i] = round((sectores_count[i] / total_viento) * 100, 1)
-            if sectores_count[i] > 0:
-                speed[i] = round(sectores_vv_sum[i] / sectores_count[i], 1)
-                
-        return freq, speed, calmas_pct
+            if p == "CALMAS":
+                wind_data["calmas"] = v
+            elif p.startswith("D"): # Dirección promedio sector
+                sec = p[1:]
+                if sec in mapping:
+                    wind_data["direcciones"][mapping[sec]] = v
+            elif len(p) == 3 and p.startswith("V"): # Velocidad promedio sector
+                sec = p[1:]
+                if sec in mapping:
+                    wind_data["velocidades"][mapping[sec]] = v
+            elif len(p) == 5 and p.startswith("V"): # Frecuencia por fuerza
+                sec = p[1:3]
+                frc = p[3:]
+                if sec in mapping and frc in forces:
+                    sector_name = mapping[sec]
+                    force_name = forces[frc]
+                    if sector_name not in wind_data["frecuencias"]:
+                        wind_data["frecuencias"][sector_name] = {}
+                    wind_data["frecuencias"][sector_name][force_name] = v
+                    
+        return wind_data
 
-    wind_freq, wind_speed, calmas = get_wind_rose()
+    # 1. Temperaturas
+    tmax_med = get_12_months('TA', 'AVGMAX', aggr="AVG", altura=H_STD)
+    tmin_med = get_12_months('TA', 'AVGMIN', aggr="AVG", altura=H_STD)
+    tmax_abs = get_12_months('TA', 'MAX',    aggr="MAX", altura=H_STD)
+    tmin_abs = get_12_months('TA', 'MIN',    aggr="MIN", altura=H_STD)
+    ta_med   = get_12_months('TA', 'AVG',    aggr="AVG", altura=H_STD)
+    helada   = get_frost_days()
 
-    # Mapear los nombres de arrays que espera `charts.py`
+    # 2. Precipitación y BHC
+    pp  = get_12_months('PP', 'SUM', aggr="SUM", altura=H_STD)
+    bhc = get_bhc_monthly()
+
+    # 3. Humedad e Insolación
+    hr_med = get_12_months('HR', 'AVG',    aggr="AVG", altura=H_STD)
+    hr_max = get_12_months('HR', 'AVGMAX', aggr="MAX", altura=H_STD)
+    hr_min = get_12_months('HR', 'AVGMIN', aggr="MIN", altura=H_STD)
+    ins    = get_12_months('INS', 'AVG', aggr="AVG", altura=H_STD)
+
+    # 4. Resumen de Viento (Consolidado desde DatosMensuales, para tablas PDF)
+    wind_summary = get_wind_summary()
+
     data = {
-        # Temperaturas: altura 6 (1.5m)
-        "tmax_med": get_12_months('TA', 'AVGMAX', aggr="AVG", altura=H_STD),
-        "tmin_med": get_12_months('TA', 'AVGMIN', aggr="AVG", altura=H_STD),
-        "tmax_abs": get_12_months('TA', 'MAX',    aggr="MAX", altura=H_STD),
-        "tmin_abs": get_12_months('TA', 'MIN',    aggr="MIN", altura=H_STD),
-        "ta_med":   get_12_months('TA', 'AVG',    aggr="AVG", altura=H_STD),
-        "helada":   get_frost_days(),
-        # Precipitación: altura 6
-        "pp":  get_12_months('PP', 'SUM', aggr="SUM", altura=H_STD),
-        # Balance Hídrico (consulta dedicada, idParametro=10117)
-        "bhc": get_bhc_monthly(),
-        # Humedad: altura 6
-        "hr_med": get_12_months('HR', 'AVG',    aggr="AVG", altura=H_STD),
-        "hr_max": get_12_months('HR', 'AVGMAX', aggr="MAX", altura=H_STD),
-        "hr_min": get_12_months('HR', 'AVGMIN', aggr="MIN", altura=H_STD),
-        # Insolación: altura 6
-        "ins":  get_12_months('INS', 'AVG', aggr="AVG", altura=H_STD),
-        # Viento: altura 9 (10m)
-        "wind_freq":  wind_freq,
-        "wind_speed": wind_speed,
-        "calmas_pct": calmas,
+        "tmax_med": tmax_med,
+        "tmin_med": tmin_med,
+        "tmax_abs": tmax_abs,
+        "tmin_abs": tmin_abs,
+        "ta_med":   ta_med,
+        "helada":   helada,
+        "pp":  pp,
+        "bhc": bhc,
+        "hr_med": hr_med,
+        "hr_max": hr_max,
+        "hr_min": hr_min,
+        "ins":  ins,
+        "wind_summary": wind_summary
     }
     
     return data
@@ -432,3 +433,122 @@ def get_province_images(conn, id_estacion):
             "provincia": bytes(row.ImagenProvincia) if row.ImagenProvincia else None,
         }
     return {"ubicacion": None, "provincia": None}
+
+
+def get_wind_rose_10min(conn, id_estacion, year):
+    """
+    Calcula la rosa de vientos desde datos 10-minutales.
+    Usa queries optimizadas: primero resuelve idMedida de VV y DV,
+    luego obtiene los pares de datos con un JOIN directo.
+    Clasifica por sector (8) e intensidad (4 clases).
+    Normalización Opción A: rosa solo vientos, calmas aparte.
+    """
+    sectors = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
+    classes = ["frouxos", "moderados", "fortes", "moi_fortes"]
+    empty = {
+        "matrix": {s: {c: 0.0 for c in classes} for s in sectors},
+        "calmas_pct": 0.0,
+        "n_total": 0,
+    }
+
+    # 1. Obtener idMedida para VV (vel.) y DV (dir.)
+    sql_medidas = """
+    SELECT idMedida, Parametro
+    FROM dbo.VIDX_AyudaMedidas_NOEXPAND
+    WHERE idEstacion = ?
+      AND idParametro IN (81, 82)
+      AND idUso = 1
+      AND idTipoIntervalo = 1
+      AND idFuncion = 1
+    """
+    rows = conn.execute(sql_medidas, id_estacion).fetchall()
+
+    id_vv = None
+    id_dv = None
+    for r in rows:
+        p = r.Parametro.strip()
+        if p == 'VV':
+            id_vv = r.idMedida
+        elif p == 'DV':
+            id_dv = r.idMedida
+
+    if not id_vv or not id_dv:
+        return empty
+
+    # 2. Obtener pares VV/DV con JOIN directo por InstanteLectura
+    start_date = f"{year}-01-01"
+    end_date = f"{year + 1}-01-01"
+
+    sql_data = """
+    SELECT VV.Valor AS vv, DV.Valor AS dv
+    FROM dbo.Datos10minutales VV
+    INNER JOIN dbo.Datos10minutales DV
+        ON VV.InstanteLectura = DV.InstanteLectura
+    WHERE VV.lnMedida = ? AND DV.lnMedida = ?
+      AND VV.InstanteLectura > ? AND VV.InstanteLectura <= ?
+      AND VV.lnCodigoValidacion NOT IN (3, 9)
+      AND DV.lnCodigoValidacion NOT IN (3, 9)
+      AND VV.Valor <> -9999
+      AND DV.Valor <> -9999
+    """
+    rows = conn.execute(sql_data, id_vv, id_dv, start_date, end_date).fetchall()
+
+    n_total = len(rows)
+    if n_total == 0:
+        return empty
+
+    # 3. Clasificar cada registro
+    n_calm = 0
+    N = [[0] * 4 for _ in range(8)]  # 8 sectores x 4 clases
+
+    for r in rows:
+        vv = float(r.vv)
+        dv = float(r.dv) % 360  # Normalizar a [0, 360)
+
+        if vv < 0:
+            continue
+
+        # Calma
+        if vv < 1.5:
+            n_calm += 1
+            continue
+
+        # Sector
+        if dv >= 338 or dv < 23:      sector = 0  # N
+        elif 23 <= dv < 68:           sector = 1  # NE
+        elif 68 <= dv < 113:          sector = 2  # E
+        elif 113 <= dv < 158:         sector = 3  # SE
+        elif 158 <= dv < 203:         sector = 4  # S
+        elif 203 <= dv < 248:         sector = 5  # SO
+        elif 248 <= dv < 293:         sector = 6  # O
+        elif 293 <= dv < 338:         sector = 7  # NO
+        else:
+            continue
+
+        # Clase de intensidad (m/s)
+        if vv <= 5.5:                 clase = 0  # Frouxo
+        elif vv <= 11.5:              clase = 1  # Moderado
+        elif vv <= 19.5:              clase = 2  # Forte
+        else:                         clase = 3  # Moi forte
+
+        N[sector][clase] += 1
+
+    # 4. Normalizar – Opción A: rosa sobre n_wind, calmas sobre n_total
+    n_wind = n_total - n_calm
+
+    matrix = {}
+    for si, sec in enumerate(sectors):
+        matrix[sec] = {}
+        for ci, cls in enumerate(classes):
+            if n_wind > 0:
+                matrix[sec][cls] = round(100.0 * N[si][ci] / n_wind, 2)
+            else:
+                matrix[sec][cls] = 0.0
+
+    calmas_pct = round(100.0 * n_calm / n_total, 1) if n_total > 0 else 0.0
+
+    return {
+        "matrix": matrix,
+        "calmas_pct": calmas_pct,
+        "n_total": n_total,
+    }

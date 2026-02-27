@@ -5,9 +5,6 @@ Configuración del proyecto Fichas de Estación.
 
 import os
 
-# ─── Modo de ejecución ───────────────────────────────────────────────
-USE_MOCK_DATA = os.environ.get("USE_MOCK_DATA", "True").lower() in ("true", "1", "t")
-
 # ─── Conexión a BD ───────────────────────────────────────────────────
 from dotenv import load_dotenv
 load_dotenv()
