@@ -3,8 +3,10 @@
 CLI para generar fichas de estación en PDF.
 
 Usage:
-    python generate.py 2024                      # Generar todas las estaciones de un año
-    python generate.py 2024 --estacion 123       # Generar una sola estación
+    python generate.py 2024                      # Generar PDF completo (coordenadas + tablas + fichas)
+    python generate.py 2024 --estacion 123       # Generar una sola ficha de estación
+    python generate.py 2024 --coordenadas        # Generar solo el PDF de coordenadas
+    python generate.py 2024 --tablas             # Generar solo el PDF de tablas de datos
     python generate.py 2024 --start-page 85      # Empezar numeración en página 85
 """
 
@@ -22,6 +24,27 @@ from charts import (
     chart_rosa_vientos,
 )
 from pdf_layout import FichaEstacionPDF
+
+
+def _merge_pdfs(input_paths, output_path):
+    """Fusiona varios PDFs en uno usando pypdf."""
+    try:
+        from pypdf import PdfWriter, PdfReader
+    except ImportError:
+        try:
+            from PyPDF2 import PdfWriter, PdfReader
+        except ImportError:
+            import shutil
+            print("  [WARN] pypdf no instalado. Índice no incluido en el PDF final.")
+            shutil.copy(input_paths[-1], output_path)
+            return
+    writer = PdfWriter()
+    for path in input_paths:
+        reader = PdfReader(path)
+        for page in reader.pages:
+            writer.add_page(page)
+    with open(output_path, 'wb') as f:
+        writer.write(f)
 
 
 def generate_all(year):
@@ -189,6 +212,10 @@ def main():
                         help='Año de los datos (vía flag)')
     parser.add_argument('--start-page', type=int, default=1,
                         help='Número de página inicial (por defecto 1)')
+    parser.add_argument('--coordenadas', action='store_true', default=False,
+                        help='Generar PDF de coordenadas de estaciones')
+    parser.add_argument('--tablas', action='store_true', default=False,
+                        help='Generar PDF de tablas de datos anuales por parámetro')
 
     args = parser.parse_args()
 
@@ -196,7 +223,54 @@ def main():
     year = args.year_pos if args.year_pos else args.year
 
     if year:
-        if args.estacion:
+        if args.coordenadas and not args.estacion:
+            # Modo: solo coordenadas
+            from data_queries import get_connection, get_coordenadas_estaciones
+            conn = get_connection()
+            try:
+                print("=" * 50)
+                print(f"  GENERACIÓN DE COORDENADAS - AÑO {year}")
+                print("=" * 50)
+
+                coord_data = get_coordenadas_estaciones(conn, year)
+                total = sum(len(v) for v in coord_data.values())
+                print(f"  Estaciones encontradas: {total}")
+
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                output_path = os.path.join(OUTPUT_DIR, f"Coordenadas_Estaciones_{year}.pdf")
+                
+                pdf = FichaEstacionPDF(output_path, start_page=args.start_page)
+                pdf.add_coordenadas_pages(coord_data)
+                pdf.save()
+
+                print(f"\n  [OK] PDF generado: {output_path}")
+            finally:
+                conn.close()
+
+        elif args.tablas and not args.estacion:
+            # Modo: solo tablas de datos anuales
+            from data_queries import get_connection
+            from tablas_queries import get_tablas_data
+            conn = get_connection()
+            try:
+                print("=" * 50)
+                print(f"  GENERACIÓN DE TABLAS - AÑO {year}")
+                print("=" * 50)
+
+                tablas_data = get_tablas_data(conn, year)
+
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                output_path = os.path.join(OUTPUT_DIR, f"Tablas_Datos_{year}.pdf")
+
+                pdf = FichaEstacionPDF(output_path, start_page=args.start_page)
+                pdf.add_tablas_pages(tablas_data)
+                pdf.save()
+
+                print(f"\n  [OK] PDF generado: {output_path}")
+            finally:
+                conn.close()
+
+        elif args.estacion:
             # Para una sola estación
             from data_queries import get_connection, get_station_info
             conn = get_connection()
@@ -213,8 +287,11 @@ def main():
             finally:
                 conn.close()
         else:
-            # Para todas las estaciones (Generación masiva en un solo PDF)
-            from data_queries import get_connection, get_active_stations
+            # Generación masiva: Índice + Coordenadas + Tablas + Fichas
+            from data_queries import (
+                get_connection, get_active_stations,
+                get_coordenadas_estaciones, get_station_info,
+            )
             conn = get_connection()
             try:
                 stations = get_active_stations(conn)
@@ -225,47 +302,110 @@ def main():
                 print("=" * 50)
 
                 os.makedirs(OUTPUT_DIR, exist_ok=True)
-                filename = f"Anuario_Fichas_{year}.pdf"
-                output_path = os.path.join(OUTPUT_DIR, filename)
-                
-                pdf = FichaEstacionPDF(output_path, start_page=args.start_page)
+                final_output = os.path.join(OUTPUT_DIR, f"Anuario_Fichas_{year}.pdf")
+                temp_content = os.path.join(OUTPUT_DIR, f"_temp_content_{year}.pdf")
+                temp_indice  = os.path.join(OUTPUT_DIR, f"_temp_indice_{year}.pdf")
 
+                # Contenido empieza en página 2 (reservamos página 1 para el índice)
+                INDICE_PAGES = 1
+                content_start = args.start_page + INDICE_PAGES
+                pdf = FichaEstacionPDF(temp_content, start_page=content_start)
+                toc_entries = []
+
+                # ── 1. Coordenadas ────────────────────────────────────
+                print("\n[Coordenadas] Generando..." , flush=True)
+                coord_data = get_coordenadas_estaciones(conn, year)
+                coord_prov_pages = pdf.add_coordenadas_pages(coord_data)
+                toc_entries.append({'level': 0, 'title': 'Coordenadas das Estacións',
+                                    'page': min(coord_prov_pages.values())})
+                for prov, ppage in coord_prov_pages.items():
+                    toc_entries.append({'level': 1, 'title': prov, 'page': ppage})
+                print(f"  [OK] págs {content_start}-{pdf.current_page - 1}")
+
+                # ── 2. Tablas ───────────────────────────────────────
+                from tablas_queries import get_tablas_data
+                print("\n[Tablas] Generando..." , flush=True)
+                tablas_data = get_tablas_data(conn, year)
+                tablas_sec_pages = pdf.add_tablas_pages(tablas_data)
+                tablas_start_pg  = tablas_sec_pages[0][1] if tablas_sec_pages else pdf.current_page
+                toc_entries.append({'level': 0, 'title': 'Datos por Parámetro',
+                                    'page': tablas_start_pg})
+                for sec_title, sec_page in tablas_sec_pages:
+                    toc_entries.append({'level': 1, 'title': sec_title, 'page': sec_page})
+                print(f"  [OK] {len(tablas_sec_pages)} secciones generadas")
+
+                # ── 3. Fichas ───────────────────────────────────────
+                fichas_start_pg  = pdf.current_page
+                fichas_prov_pages = {}   # {provincia: primera_pagina}
                 total_start_time = time.time()
                 try:
                     for i, id_estacion in enumerate(stations, 1):
                         start_station = time.time()
                         timestamp = datetime.now().strftime("%H:%M:%S")
-                        print(f"[{timestamp}] [{i}/{len(stations)}] Procesando ID {id_estacion}...", flush=True)
-                        
+                        print(f"[{timestamp}] [{i}/{len(stations)}] ID {id_estacion}...", flush=True)
                         try:
+                            # Provincia para el TOC (rápido, solo si aún no está registrada)
+                            st_info = get_station_info(conn, id_estacion)
+                            prov = st_info.get('Provincia', '').strip() if st_info else ''
+                            page_before = pdf.current_page
                             _add_station_to_pdf(conn, id_estacion, year, pdf)
-                            duration = time.time() - start_station
-                            print(f"\n\t[OK] Finalizado en {duration:.1f}s")
+                            if prov and prov not in fichas_prov_pages:
+                                fichas_prov_pages[prov] = page_before
+                            print(f"\n\t[OK] {time.time()-start_station:.1f}s")
                         except Exception as e:
-                            print(f"  [ERROR] Falló ID {id_estacion}: {e}")
+                            print(f"  [ERROR] ID {id_estacion}: {e}")
                 except KeyboardInterrupt:
-                    print(f"\n\n[!] Interrupción detectada. Intentando guardar lo procesado hasta ahora...")
+                    print("\n[!] Interrupción detectada. Guardando lo procesado...")
                 except Exception as e:
-                    print(f"\n\n[!] Error crítico durante el proceso: {e}")
-                    print("Intentando guardar el PDF con las estaciones procesadas...")
-                
-                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Guardando PDF final (esto puede tardar unos segundos)...", end=" ", flush=True)
+                    print(f"\n[!] Error crítico: {e}")
+
+                # Añadir fichas al TOC
+                toc_entries.append({'level': 0, 'title': 'Fichas de Estacións',
+                                    'page': fichas_start_pg})
+                from config import COORD_PROVINCIAS
+                for prov in COORD_PROVINCIAS:
+                    if prov in fichas_prov_pages:
+                        toc_entries.append({'level': 1, 'title': prov,
+                                            'page': fichas_prov_pages[prov]})
+
+                # Guardar contenido
+                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Guardando contenido...",
+                      end=" ", flush=True)
                 pdf.save()
-                total_duration = time.time() - total_start_time
                 print("OK")
 
+                # ── 4. Generar índice (pág. 1) ──────────────────────
+                print("\n[Índice] Generando...", flush=True)
+                indice_pdf = FichaEstacionPDF(temp_indice, start_page=args.start_page)
+                indice_pdf.add_indice_pages(toc_entries, year)
+                indice_pdf.save()
+
+                # ── 5. Fusionar índice + contenido ──────────────────
+                print("\n[Merge] Fusionando PDFs...", flush=True)
+                _merge_pdfs([temp_indice, temp_content], final_output)
+
+                # Limpiar temporales
+                for tmp in (temp_indice, temp_content):
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+
+                total_duration = time.time() - total_start_time
                 print("\n" + "=" * 50)
                 print(f"  PROCESO FINALIZADO")
                 print(f"  Tiempo total: {total_duration/60:.1f} minutos")
-                print(f"  PDF unificado generado: {output_path}")
+                print(f"  PDF generado: {final_output}")
                 print("=" * 50)
             finally:
                 conn.close()
     else:
         parser.print_help()
         print("\n  Ejemplos:")
-        print("    python generate.py 2023             # Todas las estaciones del 2023")
+        print("    python generate.py 2023             # PDF completo (indice + coordenadas + tablas + fichas)")
         print("    python generate.py 2023 --estacion 10124")
+        print("    python generate.py 2023 --coordenadas   # Solo coordenadas")
+        print("    python generate.py 2023 --tablas        # Solo tablas de datos")
         print("    python generate.py 2023 --start-page 85")
 
 

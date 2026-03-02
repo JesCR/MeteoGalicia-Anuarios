@@ -75,3 +75,21 @@ MESES_COLS = ["XAN", "FEB", "MAR", "ABR", "MAI", "XUÑ",
 
 # ─── Sectores de viento ──────────────────────────────────────────────
 WIND_SECTORS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
+
+# ─── Layout Coordenadas das Estacións ────────────────────────────────
+COORD_PROVINCIAS = ["A Coruña", "Lugo", "Ourense", "Pontevedra"]
+COORD_TABLE_ROW_H = 14          # Altura de fila de datos
+COORD_FONT_SIZE = 7             # Fuente de datos
+COORD_HEADER_FONT_SIZE = 8      # Fuente de cabecera de tabla
+COORD_TITLE_FONT_SIZE = 11      # Fuente del título "COORDENADAS DAS ESTACIÓNS"
+# Anchos de columna (en puntos) – total ≈ CONTENT_W
+COORD_COL_WIDTHS = [150, 110, 78, 68, 68, 65]  # ESTACIÓN, CONCELLO, DATA DE ALTA, UTMX, UTMY, ALT  (suma ≈ CONTENT_W)
+
+# ─── Layout Tablas de Datos Anuales ──────────────────────────────────
+TABLA_COL_EST   = 130          # Columna ESTACIÓN
+TABLA_COL_MES   = 30           # Cada mes (×12 = 360)
+TABLA_COL_ANUAL = 49           # Columna ANUAL  → 130+360+49 = 539 ≈ CONTENT_W
+TABLA_ROW_H         = 12       # Altura de fila de datos
+TABLA_FONT_SIZE     = 7        # Fuente de datos
+TABLA_HDR_FONT_SIZE = 7.5      # Fuente de cabecera de columnas
+TABLA_TITLE_FONT_SIZE = 11     # Fuente del título de sección

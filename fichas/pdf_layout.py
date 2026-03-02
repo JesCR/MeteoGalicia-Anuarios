@@ -16,6 +16,10 @@ from reportlab.pdfbase.ttfonts import TTFont
 from config import (
     PAGE_W, PAGE_H, MARGIN_LEFT, MARGIN_RIGHT, MARGIN_TOP, MARGIN_BOTTOM,
     CONTENT_W, COLOR_TITLE, COLOR_HEADER_BG,
+    COORD_TABLE_ROW_H, COORD_FONT_SIZE, COORD_HEADER_FONT_SIZE,
+    COORD_TITLE_FONT_SIZE, COORD_COL_WIDTHS, COORD_PROVINCIAS,
+    TABLA_COL_EST, TABLA_COL_MES, TABLA_COL_ANUAL,
+    TABLA_ROW_H, TABLA_FONT_SIZE, TABLA_HDR_FONT_SIZE, TABLA_TITLE_FONT_SIZE,
 )
 
 # ─── Constantes de layout (en puntos, origen abajo-izquierda) ────────
@@ -153,6 +157,345 @@ class FichaEstacionPDF:
         
         # Finalizar página y preparar la siguiente
         self.c.showPage()
+        self.current_page += 1
+
+    # ─── Páginas de Coordenadas ──────────────────────────────────────
+
+    def add_coordenadas_pages(self, data_by_provincia):
+        """
+        Genera una página de coordenadas por cada provincia.
+        Devuelve {provincia: número_de_página_inicial}.
+        """
+        prov_pages = {}
+        for prov in COORD_PROVINCIAS:
+            prov_pages[prov] = self.current_page
+            estaciones = data_by_provincia.get(prov, [])
+            self._draw_coordenadas_table(prov, estaciones)
+        return prov_pages
+
+    # ─── Páginas de Tablas de Datos Anuales ──────────────────────────
+
+    def add_tablas_pages(self, tablas_data):
+        """Genera todas las secciones del PDF de tablas anuales.
+        Devuelve [(titulo, página_inicial)] para el índice."""
+        section_pages = []
+        for section in tablas_data.get('sections', []):
+            start = self.current_page
+            self._draw_tabla_section(section)
+            section_pages.append((section['title'], start))
+        return section_pages
+
+    # ─── Página de Índice ────────────────────────────────────────────────
+
+    def add_indice_pages(self, toc_entries, year):
+        """
+        Genera la página(s) de índice con líneas de puntos y número de página.
+        toc_entries: lista de {'level': 0|1, 'title': str, 'page': int|None}
+          level=0 → cabecera de sección (negrita, sin guiones)
+          level=1 → entrada con puntos y número de página
+        """
+        c = self.c
+        self._draw_main_header()
+
+        # Título
+        title_y = MAIN_HEADER_Y - LOGO_H - 22
+        c.setFont("Helvetica-Bold", 14)
+        c.setFillColor(black)
+        c.drawCentredString(PAGE_W / 2, title_y, "ÍNDICE")
+
+        # Subtítulo año
+        c.setFont("Helvetica", 9)
+        c.setFillColor(Color(0.35, 0.35, 0.35))
+        c.drawCentredString(PAGE_W / 2, title_y - 14,
+                            f"Anuario Meteorolóxico {year}")
+
+        # Línea separadora
+        sep_y = title_y - 24
+        c.setStrokeColor(HexColor("#0077b6"))
+        c.setLineWidth(1)
+        c.line(MARGIN_LEFT, sep_y, PAGE_W - MARGIN_RIGHT, sep_y)
+
+        y = sep_y - 10
+        table_bottom_y = 75
+
+        def _check_page():
+            nonlocal y
+            if y < table_bottom_y:
+                self._draw_footer()
+                c.showPage()
+                self.current_page += 1
+                self._draw_main_header()
+                y = MAIN_HEADER_Y - LOGO_H - 20
+
+        for entry in toc_entries:
+            _check_page()
+            level  = entry.get('level', 1)
+            title  = entry['title']
+            page   = entry.get('page')
+
+            if level == 0:
+                # Cabecera de sección
+                y -= 4
+                c.setFont("Helvetica-Bold", 9)
+                c.setFillColor(HexColor("#0077b6"))
+                c.drawString(MARGIN_LEFT, y, title.upper())
+                y -= 13
+            else:
+                # Entrada con puntos
+                indent = MARGIN_LEFT + 12
+                font_name, font_size = "Helvetica", 8
+                c.setFont(font_name, font_size)
+                c.setFillColor(black)
+
+                if page is not None:
+                    page_str = str(page)
+                    title_w  = c.stringWidth(title, font_name, font_size)
+                    page_w   = c.stringWidth(page_str, font_name, font_size)
+                    dot_w    = c.stringWidth(".", font_name, font_size)
+                    right_x  = PAGE_W - MARGIN_RIGHT
+                    page_x   = right_x - page_w
+                    dot_end  = page_x - 4
+                    dot_start = indent + title_w + 4
+                    num_dots = max(0, int((dot_end - dot_start) / dot_w))
+
+                    c.drawString(indent, y, title)
+                    c.drawString(dot_start, y, "." * num_dots)
+                    c.drawRightString(right_x, y, page_str)
+                else:
+                    c.drawString(indent, y, title)
+
+                y -= 12
+
+        self._draw_footer()
+        c.showPage()
+        self.current_page += 1
+
+    def _draw_tabla_section(self, section):
+        """
+        Dibuja una sección completa (una o más páginas) de la tabla de datos anuales.
+        Cada sección = un parámetro (VV, TA, PP, etc.).
+        """
+        from config import MESES_GL
+        c = self.c
+        title    = section['title']
+        note     = section.get('note')
+        decimals = section['decimals']
+        data     = section['data']   # OrderedDict {prov: [rows]}
+
+        MONTHS_HDR  = ["XAN","FEB","MAR","ABR","MAI","XUÑ",
+                        "XUL","AGO","SET","OUT","NOV","DEC","ANUAL"]
+        col_widths  = [TABLA_COL_EST] + [TABLA_COL_MES] * 12 + [TABLA_COL_ANUAL]
+        table_bottom_y = 75
+
+        # Calcula Y de inicio de tabla según si hay nota o no
+        note_extra = 14 if note else 0
+        table_top_y = MAIN_HEADER_Y - LOGO_H - 45 - note_extra
+
+        def _draw_page_headers():
+            """Dibuja cabecera de página, título, nota y cabecera de columnas.
+            Devuelve Y de inicio de primera fila de datos."""
+            self._draw_main_header()
+
+            # Título
+            c.setFont("Helvetica-Bold", TABLA_TITLE_FONT_SIZE)
+            c.setFillColor(black)
+            title_y = MAIN_HEADER_Y - LOGO_H - 25
+            c.drawCentredString(PAGE_W / 2, title_y, title)
+
+            # Nota opcional
+            if note:
+                c.setFont("Helvetica", 8)
+                c.drawCentredString(PAGE_W / 2, title_y - 14, note)
+
+            # Cabecera de columnas
+            y = table_top_y
+            c.setFillColor(HexColor("#bfbfbf"))
+            c.rect(MARGIN_LEFT, y - TABLA_ROW_H + 3, CONTENT_W, TABLA_ROW_H, fill=1, stroke=0)
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", TABLA_HDR_FONT_SIZE)
+            x = MARGIN_LEFT
+            # ESTACIÓN: alineado a la izquierda; meses y ANUAL: centrados
+            c.drawString(x + 2, y - TABLA_ROW_H + 4, "ESTACIÓN")
+            x += TABLA_COL_EST
+            for hdr, cw in zip(MONTHS_HDR, [TABLA_COL_MES]*12 + [TABLA_COL_ANUAL]):
+                c.drawCentredString(x + cw / 2, y - TABLA_ROW_H + 4, hdr)
+                x += cw
+            return y - TABLA_ROW_H
+
+        # ── Iteración ────────────────────────────────────────────────
+        y       = _draw_page_headers()
+        row_idx = 0
+
+        def _maybe_new_page():
+            nonlocal y, row_idx
+            if y - TABLA_ROW_H < table_bottom_y:
+                self._draw_footer()
+                c.showPage()
+                self.current_page += 1
+                y = _draw_page_headers()
+                row_idx = 0
+
+        def _fmt(val):
+            if val is None:
+                return ""
+            if decimals == 0:
+                return str(int(round(val)))
+            return f"{val:.{decimals}f}"
+
+        for prov, prov_stations in data.items():
+            has_data = any(
+                any(v is not None for v in s['values']) or s['annual'] is not None
+                for s in prov_stations
+            )
+            if not prov_stations or not has_data:
+                continue
+
+            # Subheader de provincia
+            _maybe_new_page()
+            c.setFillColor(HexColor("#d9d9d9"))
+            c.rect(MARGIN_LEFT, y - TABLA_ROW_H + 3, CONTENT_W, TABLA_ROW_H, fill=1, stroke=0)
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", TABLA_HDR_FONT_SIZE)
+            c.drawString(MARGIN_LEFT + 2, y - TABLA_ROW_H + 4, prov)
+            y -= TABLA_ROW_H
+            row_idx = 0
+
+            for st in prov_stations:
+                _maybe_new_page()
+
+                text_y = y - TABLA_ROW_H + 4
+
+                # Zebra
+                if row_idx % 2 == 0:
+                    c.setFillColor(HexColor("#f2f2f2"))
+                    c.rect(MARGIN_LEFT, y - TABLA_ROW_H + 3, CONTENT_W, TABLA_ROW_H,
+                           fill=1, stroke=0)
+
+                # Nombre de estación
+                c.setFillColor(black)
+                c.setFont("Helvetica", TABLA_FONT_SIZE)
+                c.drawString(MARGIN_LEFT + 2, text_y, st['name'])
+
+                # Valores mensuales + ANUAL
+                x   = MARGIN_LEFT + TABLA_COL_EST
+                all_vals = st['values'] + [st['annual']]
+                all_cws  = [TABLA_COL_MES] * 12 + [TABLA_COL_ANUAL]
+                for val, cw in zip(all_vals, all_cws):
+                    txt = _fmt(val)
+                    if txt:
+                        c.drawCentredString(x + cw / 2, text_y, txt)
+                    x += cw
+
+                y -= TABLA_ROW_H
+                row_idx += 1
+
+        # Cerrar última página de la sección
+        self._draw_footer()
+        c.showPage()
+        self.current_page += 1
+
+    def _draw_coordenadas_table(self, provincia, estaciones):
+        """
+        Dibuja una (o más) páginas de tabla de coordenadas para una provincia.
+        Incluye cabecera MeteoGalicia, título, tabla y pie de página.
+        """
+        c = self.c
+        col_widths = COORD_COL_WIDTHS
+        headers = ["ESTACIÓN", "CONCELLO", "DATA DE ALTA", "UTMX_29T", "UTMY_29T", "ALTITUDE"]
+        # Alineación por columna: L=izquierda, C=centro, R=derecha
+        col_align = ["L", "L", "C", "C", "C", "R"]
+        row_h = COORD_TABLE_ROW_H
+
+        # Zona útil para la tabla (entre cabecera y footer)
+        table_top_y = MAIN_HEADER_Y - LOGO_H - 55   # Debajo del título
+        table_bottom_y = 75                           # Encima del footer
+
+        def start_new_page(first_page_of_prov=False):
+            """Dibuja cabecera, título y cabecera de tabla; devuelve Y de primera fila."""
+            self._draw_main_header()
+
+            # Título centrado
+            c.setFont("Helvetica-Bold", COORD_TITLE_FONT_SIZE)
+            c.setFillColor(black)
+            title_y = MAIN_HEADER_Y - LOGO_H - 30
+            c.drawCentredString(PAGE_W / 2, title_y, "COORDENADAS DAS ESTACIÓNS")
+
+            # Subheader de provincia (fila gris)
+            y = table_top_y
+            c.setFillColor(HexColor("#d9d9d9"))
+            c.rect(MARGIN_LEFT, y - row_h + 3, CONTENT_W, row_h, fill=1, stroke=0)
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", COORD_HEADER_FONT_SIZE)
+            c.drawString(MARGIN_LEFT + 4, y - row_h + 6, provincia)
+            y -= row_h
+
+            # Cabecera de columnas
+            c.setFillColor(HexColor("#bfbfbf"))
+            c.rect(MARGIN_LEFT, y - row_h + 3, CONTENT_W, row_h, fill=1, stroke=0)
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", COORD_HEADER_FONT_SIZE)
+            x = MARGIN_LEFT
+            for i, hdr in enumerate(headers):
+                align = col_align[i]
+                text_y = y - row_h + 6
+                if align == "C":
+                    c.drawCentredString(x + col_widths[i] / 2, text_y, hdr)
+                elif align == "R":
+                    c.drawRightString(x + col_widths[i] - 4, text_y, hdr)
+                else:
+                    c.drawString(x + 3, text_y, hdr)
+                x += col_widths[i]
+            y -= row_h
+
+            return y
+
+        # --- Iterar sobre estaciones ---
+        y = start_new_page(first_page_of_prov=True)
+        row_idx = 0
+
+        for est in estaciones:
+            # ¿Necesitamos nueva página?
+            if y - row_h < table_bottom_y:
+                self._draw_footer()
+                c.showPage()
+                self.current_page += 1
+                y = start_new_page(first_page_of_prov=False)
+                row_idx = 0
+
+            # Fondo zebra
+            if row_idx % 2 == 0:
+                c.setFillColor(HexColor("#f2f2f2"))
+                c.rect(MARGIN_LEFT, y - row_h + 3, CONTENT_W, row_h, fill=1, stroke=0)
+
+            # Datos
+            c.setFillColor(black)
+            c.setFont("Helvetica", COORD_FONT_SIZE)
+            x = MARGIN_LEFT
+            vals = [
+                str(est["estacion"]),
+                str(est["concello"]),
+                str(est["fecha_alta"]),
+                str(est["utmx"]),
+                str(est["utmy"]),
+                str(est["altitude"]),
+            ]
+            for i, val in enumerate(vals):
+                align = col_align[i]
+                text_y = y - row_h + 6
+                if align == "C":
+                    c.drawCentredString(x + col_widths[i] / 2, text_y, val)
+                elif align == "R":
+                    c.drawRightString(x + col_widths[i] - 4, text_y, val)
+                else:
+                    c.drawString(x + 3, text_y, val)
+                x += col_widths[i]
+
+            y -= row_h
+            row_idx += 1
+
+        # Footer y cierre de la última página de esta provincia
+        self._draw_footer()
+        c.showPage()
         self.current_page += 1
 
     def save(self):

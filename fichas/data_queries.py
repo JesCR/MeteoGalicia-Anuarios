@@ -552,3 +552,57 @@ def get_wind_rose_10min(conn, id_estacion, year):
         "calmas_pct": calmas_pct,
         "n_total": n_total,
     }
+
+
+def get_coordenadas_estaciones(conn, year):
+    """
+    Obtiene la lista de estaciones con coordenadas, agrupadas por provincia.
+    Solo incluye estaciones cuya FechaInicio (alta, incidencia tipo 7)
+    sea anterior al 1 de enero del año siguiente al solicitado.
+    """
+    sql = """
+    SELECT 
+        u.Provincia, u.concello, u.idestacion, u.estacion,
+        u.utmx, u.utmy,
+        l.Lat, l.Lon, l.Alt,
+        i.FechaInicio, i.FechaFin
+    FROM 
+        Vista_CruceEstacionesAuxConcellosCoordenadas_UTM_ETRS89 u
+        INNER JOIN Vista_CruceEstacionesListaEstacionesCoordenadas_LatLonAlt_WGS84 l 
+            ON l.lnEstacion = u.idEstacion
+        INNER JOIN AuxEstacionesIncidencias i 
+            ON i.lnEstacion = u.idEstacion
+    WHERE 
+        i.lnTipoIncidencia = 7 
+        AND (u.lnSubred = 102 OR u.lnSubred = 202)
+        AND i.FechaInicio < ?
+    ORDER BY
+        u.Provincia, u.Estacion, i.FechaInicio
+    """
+    cutoff = f"{year + 1}-01-01"
+    rows = conn.execute(sql, cutoff).fetchall()
+
+    from collections import OrderedDict
+    from config import COORD_PROVINCIAS
+
+    data = OrderedDict()
+    for prov in COORD_PROVINCIAS:
+        data[prov] = []
+
+    for r in rows:
+        prov = r.Provincia.strip() if r.Provincia else ""
+        fecha = r.FechaInicio.strftime("%d/%m/%Y") if r.FechaInicio else ""
+        entry = {
+            "estacion": r.estacion.strip() if r.estacion else "",
+            "concello": r.concello.strip() if r.concello else "",
+            "fecha_alta": fecha,
+            "utmx": int(round(r.utmx)) if r.utmx is not None else "",
+            "utmy": int(round(r.utmy)) if r.utmy is not None else "",
+            "altitude": int(round(r.Alt)) if r.Alt is not None else "",
+        }
+        # Asegurar que la provincia existe en el dict
+        if prov not in data:
+            data[prov] = []
+        data[prov].append(entry)
+
+    return data
