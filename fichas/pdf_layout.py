@@ -159,6 +159,365 @@ class FichaEstacionPDF:
         self.c.showPage()
         self.current_page += 1
 
+    # ─── Página de Portada ────────────────────────────────────────────
+
+    def add_portada_page(self, year):
+        """
+        Portada del anuario:
+        - Cabecera blanca (~1/4): logo MeteoGalicia izq, logo Xunta der
+        - Cuerpo azul central: título + separador blanco + año
+        - Pie blanco: fecha de creación a la derecha
+        """
+        import os
+        from datetime import datetime
+        from config import BASE_DIR
+
+        c = self.c
+        BLUE    = HexColor("#0077b6")
+        BLUE_DK = HexColor("#005a8e")
+
+        # ── Proporciones ──────────────────────────────────────────────
+        band_h   = 80                     # alto de bandas blancas (logos + aire)
+        header_h = band_h
+        footer_h = band_h
+        body_top = PAGE_H - header_h      # donde comienza el azul
+        body_bot = footer_h               # donde termina el azul
+
+        # ── 1. Zona blanca superior con logos ─────────────────────────
+        #  (el fondo de página ya es blanco, solo dibujamos los logos)
+        logo_margin = 40
+        logo_y_center = PAGE_H - header_h / 2   # centro vertical de la cabecera
+
+        # Logo MeteoGalicia (izquierda)
+        logo_mg = os.path.join(BASE_DIR, "logos", "METEOGALICIA_logo.jpg")
+        mg_w, mg_h = 180, 44
+        if os.path.exists(logo_mg):
+            img = ImageReader(logo_mg)
+            c.drawImage(img,
+                        logo_margin,
+                        logo_y_center - mg_h / 2,
+                        mg_w, mg_h,
+                        mask='auto', preserveAspectRatio=True)
+
+        # Logo Xunta de Galicia (derecha)
+        logo_xunta = os.path.join(BASE_DIR, "logos", "XUNTA_logo.png")
+        xg_w, xg_h = 150, 45
+        if os.path.exists(logo_xunta):
+            img = ImageReader(logo_xunta)
+            c.drawImage(img,
+                        PAGE_W - logo_margin - xg_w,
+                        logo_y_center - xg_h / 2,
+                        xg_w, xg_h,
+                        mask='auto', preserveAspectRatio=True)
+
+        # ── 2. Cuerpo azul central ────────────────────────────────────
+        c.setFillColor(BLUE)
+        c.rect(0, body_bot, PAGE_W, body_top - body_bot, fill=1, stroke=0)
+
+        # Centro vertical del cuerpo azul
+        body_center_y = (body_top + body_bot) / 2
+
+        # Título
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 34)
+        c.drawCentredString(PAGE_W / 2, body_center_y + 55, "ANUARIO")
+        c.drawCentredString(PAGE_W / 2, body_center_y + 15, "METEOROLÓXICO")
+
+        # Separador blanco
+        c.setStrokeColor(white)
+        c.setLineWidth(2)
+        sep_y = body_center_y - 10
+        c.line(PAGE_W / 2 - 80, sep_y, PAGE_W / 2 + 80, sep_y)
+
+        # Año
+        c.setFont("Helvetica-Bold", 60)
+        c.drawCentredString(PAGE_W / 2, sep_y - 65, str(year))
+
+        # Subtítulo
+        c.setFont("Helvetica", 11)
+        c.drawCentredString(PAGE_W / 2, sep_y - 95,
+                            "Consellería de Medio Ambiente, Territorio e Infraestruturas")
+
+        # ── 3. Pie blanco con fecha ───────────────────────────────────
+        fecha = datetime.now().strftime("%d/%m/%Y")
+        c.setFillColor(Color(0.45, 0.45, 0.45))
+        c.setFont("Helvetica", 8)
+        c.drawRightString(PAGE_W - 40, 30, f"Documento xerado o {fecha}")
+
+        # Finalizar portada (sin nº de página)
+        c.showPage()
+
+    # ─── Páginas de Resumen Mensual (apaisado) ───────────────────────
+
+    def add_mensual_pages(self, all_months):
+        """
+        Genera las páginas del Boletín Mensual Climatolóxico (landscape).
+        all_months: lista de dicts devuelta por load_all_mensual().
+        Devuelve [(mes_label, start_page)] para el TOC.
+        """
+        month_pages = []
+        for mdata in all_months:
+            start = self.current_page
+            self._draw_mensual_month(mdata)
+            from mensual_data import MESES_GL_FULL
+            m_idx = mdata['month'] - 1
+            label = f"Resumo {MESES_GL_FULL[m_idx]} {mdata['year']}"
+            month_pages.append((label, start))
+        return month_pages
+
+    def _draw_mensual_month(self, mdata):
+        """Dibuja todas las páginas de un mes (landscape A4)."""
+        from mensual_data import TABLE_COLUMNS, COL_ESTACION_W, MESES_GL_FULL
+
+        c = self.c
+        year  = mdata['year']
+        month = mdata['month']
+        provs = mdata['provincias']
+
+        # Landscape A4
+        LW = PAGE_H   # 841.89
+        LH = PAGE_W   # 595.28
+        LM = 25       # margen
+
+        # Fuentes
+        FONT_DATA = 6.5
+        FONT_HDR  = 6
+        ROW_H     = 11
+        HDR_ROW_H = 11
+
+        # Calcular anchos de columnas de datos
+        data_cols = TABLE_COLUMNS
+        col_est_w = COL_ESTACION_W
+        # Total disponible = LW - 2*LM - col_est_w
+        total_data_w = sum(col[3] for col in data_cols)
+        # Si no cabe, escalar proporcionalmente
+        avail_w = LW - 2 * LM - col_est_w
+        if total_data_w > avail_w:
+            scale = avail_w / total_data_w
+            col_widths = [col[3] * scale for col in data_cols]
+            col_est_w = col_est_w * scale
+        else:
+            col_widths = [col[3] for col in data_cols]
+
+        bottom_y = 55
+        month_name = MESES_GL_FULL[month - 1]
+
+        def _draw_landscape_header():
+            """Cabecera MeteoGalicia + título, en landscape."""
+            import os
+            from config import BASE_DIR
+
+            # Logo
+            logo_path = os.path.join(BASE_DIR, "logos", "METEOGALICIA_logo.jpg")
+            if os.path.exists(logo_path):
+                img = ImageReader(logo_path)
+                c.drawImage(img, LM - 8, LH - 38, 120, 28,
+                            mask='auto', preserveAspectRatio=True)
+
+            # Texto consellería
+            c.setFillColor(black)
+            c.setFont("Helvetica", 6.5)
+            c.drawString(LM, LH - 48,
+                         "Consellería de Medio Ambiente, Territorio e Infraestruturas - Xunta de Galicia")
+
+            # Título centrado
+            c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(LW / 2, LH - 30, "Boletín Mensual Climatolóxico")
+
+            # Subtítulo
+            c.setFont("Helvetica", 8)
+            c.drawCentredString(LW / 2, LH - 42,
+                                "Rede de estacións automáticas da CMA")
+
+            # Nombre del mes (esquina derecha)
+            c.setFont("Helvetica-Bold", 12)
+            c.setFillColor(HexColor("#0077b6"))
+            c.drawRightString(LW - LM, LH - 32, month_name)
+            c.setFillColor(black)
+
+        def _draw_landscape_footer():
+            """Pie de página (banda azul con nº)."""
+            c.setFillColor(HexColor("#0077b6"))
+            c.rect(LM, 25, LW - 2 * LM, 20, fill=1, stroke=0)
+            c.setFillColor(white)
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(LM + 10, 30, str(self.current_page))
+
+            # Notas al pie
+            c.setFillColor(Color(0.3, 0.3, 0.3))
+            c.setFont("Helvetica", 5.5)
+            from datetime import datetime
+            c.drawString(LM, 17, "* Mide a velocidade do vento a menos de 10 metros.")
+            c.drawString(LM, 10, "** Non se mide este parámetro nesta estación.  -- Non hai datos.")
+            c.drawRightString(LW - LM, 10,
+                              f"Documento xerado o {datetime.now().strftime('%d/%m/%Y')}")
+
+        def _draw_col_headers(y_start):
+            """Dibuja las dos filas de cabecera de columnas. Devuelve Y tras ellas."""
+            y = y_start
+            x = LM
+
+            # Fondo cabecera
+            c.setFillColor(HexColor("#e8e8e8"))
+            c.rect(LM, y - 2 * HDR_ROW_H, LW - 2 * LM, 2 * HDR_ROW_H, fill=1, stroke=0)
+
+            # Cabecera Estación
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", FONT_HDR)
+            c.drawString(LM + 2, y - 2 * HDR_ROW_H + 3, "Estación")
+
+            x = LM + col_est_w
+
+            # Fila 1 (agrupadores) y Fila 2 (sub-cabeceras)
+            prev_group = None
+            group_start_x = x
+            for i, (key, h1, h2, w_orig, align, dec) in enumerate(data_cols):
+                cw = col_widths[i]
+
+                # Fila 1: solo la primera col de cada grupo
+                if h1 and h1 != prev_group:
+                    if prev_group is not None:
+                        pass  # se dibujó al cambiar de grupo
+                    group_start_x = x
+                    prev_group = h1
+
+                # Fila 2: sub-cabecera
+                c.setFont("Helvetica-Bold", 5.5)
+                c.setFillColor(black)
+                # Tomar solo la primera línea del h2
+                h2_line = h2.split('\n')[0] if h2 else ""
+                cx = x + cw / 2
+                c.drawCentredString(cx, y - 2 * HDR_ROW_H + 3, h2_line)
+
+                x += cw
+
+            # Dibujar agrupadores (fila 1)
+            x = LM + col_est_w
+            prev_group = None
+            group_x = x
+            for i, (key, h1, h2, w_orig, align, dec) in enumerate(data_cols):
+                cw = col_widths[i]
+                if h1 and h1 != prev_group:
+                    if prev_group is not None:
+                        # Dibujar el grupo anterior
+                        c.setFont("Helvetica-Bold", 5.5)
+                        c.setFillColor(HexColor("#003f6b"))
+                        group_cx = (group_x + x) / 2
+                        c.drawCentredString(group_cx, y - HDR_ROW_H + 3, prev_group)
+                    group_x = x
+                    prev_group = h1
+                x += cw
+            # Último grupo
+            if prev_group:
+                c.setFont("Helvetica-Bold", 5.5)
+                c.setFillColor(HexColor("#003f6b"))
+                group_cx = (group_x + x) / 2
+                c.drawCentredString(group_cx, y - HDR_ROW_H + 3, prev_group)
+
+            return y - 2 * HDR_ROW_H
+
+        # ── Precalcular posiciones X de separadores ─────────────────────
+        sep_xs = []
+        x_sep = LM + col_est_w
+        prev_grp_sep = None
+        for i, (key, h1, h2, w_orig, align, dec) in enumerate(data_cols):
+            cw = col_widths[i]
+            if h1 and h1 != prev_grp_sep and prev_grp_sep is not None:
+                sep_xs.append(x_sep)
+            if h1:
+                prev_grp_sep = h1
+            x_sep += cw
+
+        def _draw_vertical_seps(top_y, bot_y):
+            """Dibuja separadores verticales azules entre grupos."""
+            c.setStrokeColor(HexColor("#a0c4e0"))
+            c.setLineWidth(0.4)
+            for sx in sep_xs:
+                c.line(sx, top_y, sx, bot_y)
+
+        def _finish_page(page_top_y, page_bot_y):
+            """Dibuja seps verticales + footer y cierra la página."""
+            _draw_vertical_seps(page_top_y, page_bot_y)
+            _draw_landscape_footer()
+
+        # ── Bucle de dibujo ───────────────────────────────────────────
+        c.setPageSize((LW, LH))
+
+        first_page = True
+        y = 0
+        page_top_y = 0
+
+        for prov, stations in provs.items():
+            # ¿Cabe al menos la subheader de provincia + 1 fila?
+            if not first_page and y - ROW_H * 2 < bottom_y:
+                _finish_page(page_top_y, y)
+                c.showPage()
+                c.setPageSize((LW, LH))
+                self.current_page += 1
+                first_page = True
+
+            if first_page:
+                _draw_landscape_header()
+                y = LH - 55
+                y = _draw_col_headers(y)
+                page_top_y = y
+                first_page = False
+
+            # Subheader provincia
+            c.setFillColor(HexColor("#d0d0d0"))
+            c.rect(LM, y - ROW_H, LW - 2 * LM, ROW_H, fill=1, stroke=0)
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", FONT_DATA)
+            c.drawString(LM + 2, y - ROW_H + 3, prov)
+            y -= ROW_H
+
+            # Filas de datos
+            for row_idx, st in enumerate(stations):
+                if y - ROW_H < bottom_y:
+                    _finish_page(page_top_y, y)
+                    c.showPage()
+                    c.setPageSize((LW, LH))
+                    self.current_page += 1
+                    _draw_landscape_header()
+                    y = LH - 55
+                    y = _draw_col_headers(y)
+                    page_top_y = y
+
+                # Zebra
+                if row_idx % 2 == 0:
+                    c.setFillColor(HexColor("#f5f5f5"))
+                    c.rect(LM, y - ROW_H, LW - 2 * LM, ROW_H, fill=1, stroke=0)
+
+                # Nombre estación
+                c.setFillColor(black)
+                c.setFont("Helvetica", FONT_DATA)
+                c.drawString(LM + 2, y - ROW_H + 3, st['name'])
+
+                # Valores
+                x = LM + col_est_w
+                for i, (key, h1, h2, w_orig, align, dec) in enumerate(data_cols):
+                    cw = col_widths[i]
+                    val = st['values'].get(key, '')
+                    c.setFont("Helvetica", FONT_DATA)
+                    if val in ('**', '--'):
+                        c.setFillColor(Color(0.6, 0.6, 0.6))
+                    else:
+                        c.setFillColor(black)
+
+                    if align == "R":
+                        c.drawRightString(x + cw - 2, y - ROW_H + 3, val)
+                    else:
+                        c.drawCentredString(x + cw / 2, y - ROW_H + 3, val)
+                    x += cw
+
+                y -= ROW_H
+
+        # Cerrar última página
+        _finish_page(page_top_y, y)
+        c.showPage()
+        c.setPageSize((PAGE_W, PAGE_H))  # Restaurar portrait
+        self.current_page += 1
+
     # ─── Páginas de Coordenadas ──────────────────────────────────────
 
     def add_coordenadas_pages(self, data_by_provincia):
@@ -185,6 +544,118 @@ class FichaEstacionPDF:
             section_pages.append((section['title'], start))
         return section_pages
 
+    # ─── Páginas de Glosario ──────────────────────────────────────────────
+
+    def add_glosario_pages(self):
+        """
+        Genera el glosario de t\u00e9rminos meteorol\u00f3xicos.
+        - Margen lateral amplio (50 pts c/lado)
+        - Fuente 9 pt
+        - Texto de definici\u00f3n justificado
+        - T\u00e9rmino en su propia l\u00ednea (negrita azul), definici\u00f3n debajo (sangr\u00eda)
+        """
+        from glosario_data import GLOSARIO_TITULO, GLOSARIO_ENTRIES
+
+        c = self.c
+
+        # ── Layout del glosario ───────────────────────────────────────
+        GML       = 50          # Margen izquierdo del glosario
+        GMR       = 50          # Margen derecho del glosario
+        GCW       = PAGE_W - GML - GMR   # ~495 pts de ancho \u00fatil
+        DEF_X     = GML + 14    # Sangr\u00eda de la definici\u00f3n
+        DEF_W     = GCW - 14    # Ancho disponible para definici\u00f3n
+
+        FONT_TERM = ("Helvetica-Bold", 9)
+        FONT_DEF  = ("Helvetica",      9)
+        LINE_H    = 14           # interlineado
+        ENTRY_GAP = 7            # espacio extra entre entradas
+        BOTTOM_Y  = 75
+
+        # ── Funciones auxiliares ──────────────────────────────────────
+        def _start_page():
+            self._draw_main_header()
+            ty = MAIN_HEADER_Y - LOGO_H - 37
+            c.setFont("Helvetica-Bold", 13)
+            c.setFillColor(HexColor("#0077b6"))
+            c.drawCentredString(PAGE_W / 2, ty, GLOSARIO_TITULO)
+            c.setStrokeColor(HexColor("#0077b6"))
+            c.setLineWidth(0.8)
+            c.line(GML, ty - 8, PAGE_W - GMR, ty - 8)
+            c.setFillColor(black)
+            return ty - 22
+
+        def _wrap_words(words, avail, font_name, font_size):
+            """Agrupa palabras en l\u00edneas que caben en 'avail' pts."""
+            lines, cur = [], []
+            for w in words:
+                test = " ".join(cur + [w])
+                if c.stringWidth(test, font_name, font_size) <= avail:
+                    cur.append(w)
+                else:
+                    if cur:
+                        lines.append(cur)
+                    cur = [w]
+            if cur:
+                lines.append(cur)
+            return lines
+
+        def _draw_justified(x, y, words, avail, font_name, font_size, last_line=False):
+            """Dibuja una l\u00ednea justificada. \u00daltima l\u00ednea alineada a la izquierda."""
+            if not words:
+                return
+            if last_line or len(words) == 1:
+                c.setFont(font_name, font_size)
+                c.drawString(x, y, " ".join(words))
+                return
+            total_w = sum(c.stringWidth(w, font_name, font_size) for w in words)
+            gap     = (avail - total_w) / (len(words) - 1)
+            cx = x
+            c.setFont(font_name, font_size)
+            for i, w in enumerate(words):
+                c.drawString(cx, y, w)
+                cx += c.stringWidth(w, font_name, font_size) + (gap if i < len(words) - 1 else 0)
+
+        # ── Bucle principal ───────────────────────────────────────────
+        cy = _start_page()
+
+        for term, definition in GLOSARIO_ENTRIES:
+            # Preparar l\u00edneas de definici\u00f3n
+            def_lines = _wrap_words(definition.split(), DEF_W, FONT_DEF[0], FONT_DEF[1])
+            total_height = LINE_H + LINE_H * len(def_lines) + ENTRY_GAP   # t\u00e9rmino + def + gap
+
+            # Nueva p\u00e1gina si no cabe la entrada completa
+            if cy - total_height < BOTTOM_Y:
+                self._draw_footer()
+                c.showPage()
+                self.current_page += 1
+                cy = _start_page()
+
+            # Dibujar t\u00e9rmino: "\u2022 TERMO:" en negrita azul oscuro
+            c.setFont(*FONT_TERM)
+            c.setFillColor(HexColor("#003f6b"))
+            c.drawString(GML, cy, f"\u2022 {term}:")
+            cy -= LINE_H
+            c.setFillColor(black)
+
+            # Dibujar definici\u00f3n justificada (sangrada)
+            for i, line_words in enumerate(def_lines):
+                if cy < BOTTOM_Y:
+                    self._draw_footer()
+                    c.showPage()
+                    self.current_page += 1
+                    cy = _start_page()
+                is_last = (i == len(def_lines) - 1)
+                _draw_justified(DEF_X, cy, line_words, DEF_W,
+                                FONT_DEF[0], FONT_DEF[1], last_line=is_last)
+                cy -= LINE_H
+
+            cy -= ENTRY_GAP
+
+        self._draw_footer()
+        c.showPage()
+        self.current_page += 1
+
+
     # ─── Página de Índice ────────────────────────────────────────────────
 
     def add_indice_pages(self, toc_entries, year):
@@ -198,7 +669,7 @@ class FichaEstacionPDF:
         self._draw_main_header()
 
         # Título
-        title_y = MAIN_HEADER_Y - LOGO_H - 22
+        title_y = MAIN_HEADER_Y - LOGO_H - 37
         c.setFont("Helvetica-Bold", 14)
         c.setFillColor(black)
         c.drawCentredString(PAGE_W / 2, title_y, "ÍNDICE")
@@ -225,7 +696,7 @@ class FichaEstacionPDF:
                 c.showPage()
                 self.current_page += 1
                 self._draw_main_header()
-                y = MAIN_HEADER_Y - LOGO_H - 20
+                y = MAIN_HEADER_Y - LOGO_H - 37
 
         for entry in toc_entries:
             _check_page()
@@ -289,7 +760,7 @@ class FichaEstacionPDF:
 
         # Calcula Y de inicio de tabla según si hay nota o no
         note_extra = 14 if note else 0
-        table_top_y = MAIN_HEADER_Y - LOGO_H - 45 - note_extra
+        table_top_y = MAIN_HEADER_Y - LOGO_H - 60 - note_extra
 
         def _draw_page_headers():
             """Dibuja cabecera de página, título, nota y cabecera de columnas.
@@ -299,7 +770,7 @@ class FichaEstacionPDF:
             # Título
             c.setFont("Helvetica-Bold", TABLA_TITLE_FONT_SIZE)
             c.setFillColor(black)
-            title_y = MAIN_HEADER_Y - LOGO_H - 25
+            title_y = MAIN_HEADER_Y - LOGO_H - 40
             c.drawCentredString(PAGE_W / 2, title_y, title)
 
             # Nota opcional
@@ -407,7 +878,7 @@ class FichaEstacionPDF:
         row_h = COORD_TABLE_ROW_H
 
         # Zona útil para la tabla (entre cabecera y footer)
-        table_top_y = MAIN_HEADER_Y - LOGO_H - 55   # Debajo del título
+        table_top_y = MAIN_HEADER_Y - LOGO_H - 70   # Debajo del título
         table_bottom_y = 75                           # Encima del footer
 
         def start_new_page(first_page_of_prov=False):
@@ -417,7 +888,7 @@ class FichaEstacionPDF:
             # Título centrado
             c.setFont("Helvetica-Bold", COORD_TITLE_FONT_SIZE)
             c.setFillColor(black)
-            title_y = MAIN_HEADER_Y - LOGO_H - 30
+            title_y = MAIN_HEADER_Y - LOGO_H - 45
             c.drawCentredString(PAGE_W / 2, title_y, "COORDENADAS DAS ESTACIÓNS")
 
             # Subheader de provincia (fila gris)

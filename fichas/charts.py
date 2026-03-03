@@ -266,12 +266,16 @@ def chart_rosa_vientos(monthly):
     ax.legend(loc='upper left', bbox_to_anchor=(-0.55, 1.1),
               fontsize=8, frameon=False)
 
-    # 4. Calmas (Centradas, más grandes, peso normal)
-    # Ajustamos la posición horizontal para asegurar centrado visual respecto al círculo
-    fig.text(0.48, 0.05, f"Calmas: {calmas:.0f}%",
-             ha='center', va='bottom', fontsize=10, fontweight='normal')
-
+    # 4. Aplicar tight_layout antes de determinar la posición del eje
     fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+    # Calmas: centrado bajo el círculo de la rosa (posición real del eje polar)
+    pos = ax.get_position()                          # Bbox en coordenadas de figura [0-1]
+    center_x = (pos.x0 + pos.x1) / 2
+    text_y   = pos.y0 - 0.03                         # Justo debajo del círculo
+    fig.text(center_x, text_y, f"Calmas: {calmas:.0f}%",
+             ha='center', va='top', fontsize=10, fontweight='normal')
+
     return _to_bytesio(fig)
 
 

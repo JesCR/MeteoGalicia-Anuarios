@@ -79,6 +79,7 @@ def get_annual_summary(conn, id_estacion, year):
           AND LMT.lnAltura = ?
           AND M.lnUso = 1
           AND D.Valor <> -9999
+          AND D.lnCodigoValidacion IN (1, 5)
           {extra_where}
         """
         row = conn.execute(sql, id_estacion, year, parametro, funcion, altura).fetchone()
@@ -103,6 +104,7 @@ def get_annual_summary(conn, id_estacion, year):
           AND LMT.lnAltura = ?
           AND M.lnUso = 1
           AND D.Valor <> -9999
+          AND D.lnCodigoValidacion IN (1, 5)
         ORDER BY D.Valor {order}
         """
         row = conn.execute(sql, id_estacion, year, parametro, funcion, altura).fetchone()
@@ -127,6 +129,7 @@ def get_annual_summary(conn, id_estacion, year):
           AND LMT.lnAltura = ?
           AND M.lnUso = 1
           AND D.Valor <> -9999
+          AND D.lnCodigoValidacion IN (1, 5)
           AND D.Valor {operator} {threshold}
         """
         row = conn.execute(sql, id_estacion, year, parametro, funcion, altura).fetchone()
@@ -235,6 +238,7 @@ def get_monthly_data(conn, id_estacion, year):
           AND LMT.lnAltura = ?
           AND M.lnUso = 1
           AND D.Valor <> -9999
+          AND D.lnCodigoValidacion IN (1, 5)
         GROUP BY MONTH(D.FechaHora)
         ORDER BY MONTH(D.FechaHora)
         """
@@ -263,6 +267,7 @@ def get_monthly_data(conn, id_estacion, year):
           AND LMT.lnAltura = 6
           AND M.lnUso = 1
           AND D.Valor <> -9999
+          AND D.lnCodigoValidacion IN (1, 5)
           AND D.Valor < 0
         GROUP BY MONTH(D.FechaHora)
         ORDER BY MONTH(D.FechaHora)
@@ -290,6 +295,7 @@ def get_monthly_data(conn, id_estacion, year):
           AND YEAR(D.FechaHora) = ?
           AND P.idParametro = 10117
           AND D.Valor <> -9999
+          AND D.lnCodigoValidacion IN (1, 5)
           AND M.lnUso = 1
         GROUP BY MONTH(D.FechaHora)
         ORDER BY MONTH(D.FechaHora)
@@ -315,8 +321,7 @@ def get_monthly_data(conn, id_estacion, year):
           AND m.idParametro >= 30000
           AND d.FechaHora >= ? 
           AND d.FechaHora < ?
-          AND d.lnCodigoValidacion <> 9
-          AND d.lnCodigoValidacion <> 3
+          AND d.lnCodigoValidacion IN (1, 5)
           AND d.Valor <> -9999
         GROUP BY m.Parametro
         """
@@ -486,8 +491,8 @@ def get_wind_rose_10min(conn, id_estacion, year):
         ON VV.InstanteLectura = DV.InstanteLectura
     WHERE VV.lnMedida = ? AND DV.lnMedida = ?
       AND VV.InstanteLectura > ? AND VV.InstanteLectura <= ?
-      AND VV.lnCodigoValidacion NOT IN (3, 9)
-      AND DV.lnCodigoValidacion NOT IN (3, 9)
+      AND VV.lnCodigoValidacion IN (1, 5)
+      AND DV.lnCodigoValidacion IN (1, 5)
       AND VV.Valor <> -9999
       AND DV.Valor <> -9999
     """

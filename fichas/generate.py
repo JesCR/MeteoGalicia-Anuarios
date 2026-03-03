@@ -3,10 +3,13 @@
 CLI para generar fichas de estación en PDF.
 
 Usage:
-    python generate.py 2024                      # Generar PDF completo (coordenadas + tablas + fichas)
+    python generate.py 2024                      # PDF completo (portada + indice + coord + tablas + mensual + fichas + glosario)
     python generate.py 2024 --estacion 123       # Generar una sola ficha de estación
     python generate.py 2024 --coordenadas        # Generar solo el PDF de coordenadas
     python generate.py 2024 --tablas             # Generar solo el PDF de tablas de datos
+    python generate.py 2024 --mensual            # Generar solo el PDF de resúmenes mensuales
+    python generate.py 2024 --glosario           # Generar solo el PDF del glosario
+    python generate.py 2024 --portada            # Generar solo la portada
     python generate.py 2024 --start-page 85      # Empezar numeración en página 85
 """
 
@@ -215,7 +218,13 @@ def main():
     parser.add_argument('--coordenadas', action='store_true', default=False,
                         help='Generar PDF de coordenadas de estaciones')
     parser.add_argument('--tablas', action='store_true', default=False,
-                        help='Generar PDF de tablas de datos anuales por parámetro')
+                        help='Generar solo el PDF de tablas de datos anuales por parámetro')
+    parser.add_argument('--glosario', action='store_true', default=False,
+                        help='Generar solo el PDF del glosario de términos')
+    parser.add_argument('--portada', action='store_true', default=False,
+                        help='Generar solo la portada del anuario')
+    parser.add_argument('--mensual', action='store_true', default=False,
+                        help='Generar solo el PDF de resúmenes mensuales (desde CSVs)')
 
     args = parser.parse_args()
 
@@ -223,7 +232,37 @@ def main():
     year = args.year_pos if args.year_pos else args.year
 
     if year:
-        if args.coordenadas and not args.estacion:
+        if args.portada and not args.estacion:
+            # Modo: solo portada
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            output_path = os.path.join(OUTPUT_DIR, f"Portada_{year}.pdf")
+            print("=" * 50)
+            print(f"  GENERACIÓN DE PORTADA - AÑO {year}")
+            print("=" * 50)
+            pdf = FichaEstacionPDF(output_path, start_page=args.start_page)
+            pdf.add_portada_page(year)
+            pdf.save()
+            print(f"\n  [OK] PDF generado: {output_path}")
+
+        elif args.mensual and not args.estacion:
+            # Modo: solo resumen mensual
+            from mensual_data import load_all_mensual
+            from config import DOCS_DIR
+            csv_dir = os.path.join(DOCS_DIR, "csv", str(year))
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            output_path = os.path.join(OUTPUT_DIR, f"Mensual_{year}.pdf")
+            print("=" * 50)
+            print(f"  GENERACIÓN DE RESÚMENES MENSUALES - AÑO {year}")
+            print(f"  Directorio CSV: {csv_dir}")
+            print("=" * 50)
+            all_months = load_all_mensual(csv_dir, year)
+            print(f"  Meses encontrados: {len(all_months)}")
+            pdf = FichaEstacionPDF(output_path, start_page=args.start_page)
+            pdf.add_mensual_pages(all_months)
+            pdf.save()
+            print(f"\n  [OK] PDF generado: {output_path}")
+
+        elif args.coordenadas and not args.estacion:
             # Modo: solo coordenadas
             from data_queries import get_connection, get_coordenadas_estaciones
             conn = get_connection()
@@ -270,6 +309,18 @@ def main():
             finally:
                 conn.close()
 
+        elif args.glosario and not args.estacion:
+            # Modo: solo glosario
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            output_path = os.path.join(OUTPUT_DIR, f"Glosario_{year}.pdf")
+            print("=" * 50)
+            print(f"  GENERACIÓN DE GLOSARIO")
+            print("=" * 50)
+            pdf = FichaEstacionPDF(output_path, start_page=args.start_page)
+            pdf.add_glosario_pages()
+            pdf.save()
+            print(f"\n  [OK] PDF generado: {output_path}")
+
         elif args.estacion:
             # Para una sola estación
             from data_queries import get_connection, get_station_info
@@ -287,7 +338,7 @@ def main():
             finally:
                 conn.close()
         else:
-            # Generación masiva: Índice + Coordenadas + Tablas + Fichas
+            # Generación masiva: Portada + Índice + Coordenadas + Tablas + Fichas + Glosario
             from data_queries import (
                 get_connection, get_active_stations,
                 get_coordenadas_estaciones, get_station_info,
@@ -302,11 +353,19 @@ def main():
                 print("=" * 50)
 
                 os.makedirs(OUTPUT_DIR, exist_ok=True)
-                final_output = os.path.join(OUTPUT_DIR, f"Anuario_Fichas_{year}.pdf")
-                temp_content = os.path.join(OUTPUT_DIR, f"_temp_content_{year}.pdf")
-                temp_indice  = os.path.join(OUTPUT_DIR, f"_temp_indice_{year}.pdf")
+                final_output  = os.path.join(OUTPUT_DIR, f"Anuario_Fichas_{year}.pdf")
+                temp_portada  = os.path.join(OUTPUT_DIR, f"_temp_portada_{year}.pdf")
+                temp_content  = os.path.join(OUTPUT_DIR, f"_temp_content_{year}.pdf")
+                temp_indice   = os.path.join(OUTPUT_DIR, f"_temp_indice_{year}.pdf")
 
-                # Contenido empieza en página 2 (reservamos página 1 para el índice)
+                # ── 0. Portada ───────────────────────────────────────
+                print("\n[Portada] Xerando...", flush=True)
+                portada_pdf = FichaEstacionPDF(temp_portada, start_page=1)
+                portada_pdf.add_portada_page(year)
+                portada_pdf.save()
+                print("  [OK] Portada xerada")
+
+                # Contenido empieza en pág 2 (reservamos pág 1 para el índice)
                 INDICE_PAGES = 1
                 content_start = args.start_page + INDICE_PAGES
                 pdf = FichaEstacionPDF(temp_content, start_page=content_start)
@@ -334,7 +393,24 @@ def main():
                     toc_entries.append({'level': 1, 'title': sec_title, 'page': sec_page})
                 print(f"  [OK] {len(tablas_sec_pages)} secciones generadas")
 
-                # ── 3. Fichas ───────────────────────────────────────
+                # ── 3. Resumos mensuales ─────────────────────────
+                from mensual_data import load_all_mensual
+                from config import DOCS_DIR
+                csv_dir = os.path.join(DOCS_DIR, "csv", str(year))
+                print(f"\n[Mensual] Xerando desde {csv_dir}...", flush=True)
+                all_months = load_all_mensual(csv_dir, year)
+                if all_months:
+                    mensual_pages = pdf.add_mensual_pages(all_months)
+                    mensual_start = mensual_pages[0][1] if mensual_pages else pdf.current_page
+                    toc_entries.append({'level': 0, 'title': 'Resumos Mensuales',
+                                        'page': mensual_start})
+                    for ml, mp in mensual_pages:
+                        toc_entries.append({'level': 1, 'title': ml, 'page': mp})
+                    print(f"  [OK] {len(all_months)} meses xerados")
+                else:
+                    print("  [WARN] Non se atoparon CSVs mensuales")
+
+                # ── 4. Fichas ───────────────────────────────────────
                 fichas_start_pg  = pdf.current_page
                 fichas_prov_pages = {}   # {provincia: primera_pagina}
                 total_start_time = time.time()
@@ -368,24 +444,32 @@ def main():
                         toc_entries.append({'level': 1, 'title': prov,
                                             'page': fichas_prov_pages[prov]})
 
+                # ── 5. Glosario ────────────────────────────────────
+                glosario_start = pdf.current_page
+                print("\n[Glosario] Xerando...", flush=True)
+                pdf.add_glosario_pages()
+                toc_entries.append({'level': 0, 'title': 'Glosario de Termos Meteorolóxicos',
+                                    'page': glosario_start})
+                print(f"  [OK] págs {glosario_start}-{pdf.current_page - 1}")
+
                 # Guardar contenido
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Guardando contenido...",
                       end=" ", flush=True)
                 pdf.save()
                 print("OK")
 
-                # ── 4. Generar índice (pág. 1) ──────────────────────
+                # ── 5. Generar índice (pág. 1) ──────────────────────
                 print("\n[Índice] Generando...", flush=True)
                 indice_pdf = FichaEstacionPDF(temp_indice, start_page=args.start_page)
                 indice_pdf.add_indice_pages(toc_entries, year)
                 indice_pdf.save()
 
-                # ── 5. Fusionar índice + contenido ──────────────────
+                # ── 6. Fusionar: portada + índice + contenido ──────────
                 print("\n[Merge] Fusionando PDFs...", flush=True)
-                _merge_pdfs([temp_indice, temp_content], final_output)
+                _merge_pdfs([temp_portada, temp_indice, temp_content], final_output)
 
                 # Limpiar temporales
-                for tmp in (temp_indice, temp_content):
+                for tmp in (temp_portada, temp_indice, temp_content):
                     try:
                         os.remove(tmp)
                     except OSError:
@@ -402,10 +486,13 @@ def main():
     else:
         parser.print_help()
         print("\n  Ejemplos:")
-        print("    python generate.py 2023             # PDF completo (indice + coordenadas + tablas + fichas)")
+        print("    python generate.py 2023             # PDF completo")
         print("    python generate.py 2023 --estacion 10124")
         print("    python generate.py 2023 --coordenadas   # Solo coordenadas")
         print("    python generate.py 2023 --tablas        # Solo tablas de datos")
+        print("    python generate.py 2023 --mensual       # Solo resúmenes mensuales")
+        print("    python generate.py 2023 --glosario      # Solo glosario")
+        print("    python generate.py 2023 --portada       # Solo portada")
         print("    python generate.py 2023 --start-page 85")
 
 

@@ -221,6 +221,7 @@ def _query_monthly(conn, year, id_parametro, id_funcion, id_altura, ids_list):
       {altura_clause}
       AND M.lnUso = 1
       AND D.Valor <> -9999
+      AND D.lnCodigoValidacion IN (1, 5)
       AND S.lnEstacion IN ({ids_str})
     GROUP BY S.lnEstacion{extra_select}, MONTH(D.FechaHora)
     ORDER BY S.lnEstacion{extra_group}, MONTH(D.FechaHora)
