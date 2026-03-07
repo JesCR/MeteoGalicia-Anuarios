@@ -20,6 +20,47 @@ def get_active_stations(conn):
     return [row.idEstacion for row in rows]
 
 
+def get_active_stations_ordered(conn, year):
+    """
+    Obtiene las estaciones de subred 102 que estuvieron activas durante 'year',
+    ordenadas por Provincia y NombreCorto.
+
+    Criterio (usando AuxEstacionesIncidencias, lnTipoIncidencia=7 = alta):
+      - FechaInicio < '{year+1}-01-01'  →  dada de alta antes de que acabe el año
+      - FechaFin IS NULL
+        OR FechaFin >= '{year}-01-01'   →  no dada de baja antes del año
+
+    Devuelve lista de dicts: idEstacion, Provincia, NombreCorto.
+    """
+    sql = """
+    SELECT DISTINCT
+        E.idEstacion,
+        P.NOME AS Provincia,
+        COALESCE(E.NombreCorto, E.Estacion) AS NombreCorto
+    FROM dbo.SysEstaciones E
+    INNER JOIN dbo.AuxEstacionesIncidencias I
+        ON I.lnEstacion = E.idEstacion
+        AND I.lnTipoIncidencia = 7
+    LEFT JOIN dbo.AuxConcellos C ON C.idConcello = E.lnConcello
+    LEFT JOIN dbo.AuxProvincias P ON P.IdPROV = C.lnPROV
+    WHERE E.lnSubred = 102
+      AND I.FechaInicio < ?
+      AND (I.FechaFin IS NULL OR I.FechaFin >= ?)
+    ORDER BY P.NOME, COALESCE(E.NombreCorto, E.Estacion)
+    """
+    year_start = f"{year}-01-01"
+    year_end   = f"{year + 1}-01-01"
+    rows = conn.execute(sql, (year_end, year_start)).fetchall()
+    return [
+        {
+            "idEstacion": row.idEstacion,
+            "Provincia": row.Provincia.strip() if row.Provincia else "",
+            "NombreCorto": row.NombreCorto.strip() if row.NombreCorto else "",
+        }
+        for row in rows
+    ]
+
+
 def get_station_info(conn, id_estacion):
     """Información básica de la estación."""
     sql = """
