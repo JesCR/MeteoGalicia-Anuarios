@@ -272,7 +272,7 @@ def chart_rosa_vientos(monthly):
     # Calmas: centrado bajo el círculo de la rosa (posición real del eje polar)
     pos = ax.get_position()                          # Bbox en coordenadas de figura [0-1]
     center_x = (pos.x0 + pos.x1) / 2
-    text_y   = pos.y0 - 0.03                         # Justo debajo del círculo
+    text_y   = pos.y0 - 0.10                         # Debajo de la etiqueta S (sur)
     fig.text(center_x, text_y, f"Calmas: {calmas:.0f}%",
              ha='center', va='top', fontsize=10, fontweight='normal')
 

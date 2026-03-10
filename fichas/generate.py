@@ -19,7 +19,7 @@ import argparse
 import time
 from datetime import datetime
 
-from config import OUTPUT_DIR
+from config import OUTPUT_DIR, DOCS_DIR
 from charts import (
     chart_temperaturas,
     chart_precipitacion,
@@ -88,8 +88,15 @@ def _teardown_logging(tee):
     tee.close()
 
 
-def _merge_pdfs(input_paths, output_path):
-    """Fusiona varios PDFs en uno usando pypdf."""
+# ─── Merge de PDFs ───────────────────────────────────────────────────────────
+
+def _merge_pdfs(input_paths, output_path, insertions=None):
+    """
+    Fusiona varios PDFs en uno usando pypdf.
+    insertions: lista opcional de (page_index_global, pdf_path)
+        Inserta las páginas del PDF en la posición page_index_global
+        del resultado combinado.
+    """
     try:
         from pypdf import PdfWriter, PdfReader
     except ImportError:
@@ -100,19 +107,35 @@ def _merge_pdfs(input_paths, output_path):
             print("  [WARN] pypdf no instalado. Índice no incluido en el PDF final.")
             shutil.copy(input_paths[-1], output_path)
             return
-    writer = PdfWriter()
+
+    # Recopilar todas las páginas en orden
+    all_pages = []
     for path in input_paths:
         reader = PdfReader(path)
         for page in reader.pages:
-            writer.add_page(page)
+            all_pages.append(page)
+
+    # Insertar PDFs externos en las posiciones indicadas
+    if insertions:
+        # Ordenar de mayor a menor para no alterar índices previos
+        for idx, ext_path in sorted(insertions, key=lambda x: x[0], reverse=True):
+            ext_reader = PdfReader(ext_path)
+            for i, page in enumerate(ext_reader.pages):
+                all_pages.insert(idx + i, page)
+
+    writer = PdfWriter()
+    for page in all_pages:
+        writer.add_page(page)
     with open(output_path, 'wb') as f:
         writer.write(f)
 
 
+# ─── Funciones legacy (compatibilidad) ───────────────────────────────────────
+
 def generate_all(year):
     """Genera fichas para todas las estaciones activas del subred 102."""
     from data_queries import get_connection, get_active_stations
-    
+
     conn = get_connection()
     try:
         stations = get_active_stations(conn)
@@ -124,7 +147,7 @@ def generate_all(year):
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         filename = f"Anuario_Fichas_{year}.pdf"
         output_path = os.path.join(OUTPUT_DIR, filename)
-        
+
         pdf = FichaEstacionPDF(output_path)
 
         for i, id_estacion in enumerate(stations, 1):
@@ -133,7 +156,7 @@ def generate_all(year):
                 _add_station_to_pdf(conn, id_estacion, year, pdf)
             except Exception as e:
                 print(f"  [ERROR] Falló ID {id_estacion}: {e}")
-        
+
         pdf.save()
         print("\n" + "=" * 50)
         print(f"  PROCESO FINALIZADO")
@@ -152,14 +175,14 @@ def generate_from_db(id_estacion, year):
         print("  GENERADOR DE FICHAS DE ESTACIÓN")
         print("  Modo: BASE DE DATOS")
         print("=" * 50)
-        
+
         from data_queries import get_station_info
         station = get_station_info(conn, id_estacion)
         clean_name = station['NombreCorto'].replace(' ', '_').replace('/', '-') if station else str(id_estacion)
-        
+
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         output_path = os.path.join(OUTPUT_DIR, f"Ficha_{clean_name}_{year}.pdf")
-        
+
         pdf = FichaEstacionPDF(output_path)
         _add_station_to_pdf(conn, id_estacion, year, pdf)
         pdf.save()
@@ -167,6 +190,8 @@ def generate_from_db(id_estacion, year):
     finally:
         conn.close()
 
+
+# ─── Lógica de generación de ficha individual ────────────────────────────────
 
 def _add_station_to_pdf(conn, id_estacion, year, pdf):
     """Obtiene datos de la BD y los añade como una nueva página al objeto PDF."""
@@ -178,14 +203,14 @@ def _add_station_to_pdf(conn, id_estacion, year, pdf):
         get_province_images,
         get_wind_rose_10min,
     )
-    
+
     # 1. Leer BD
     t_start_db = time.time()
-    
+
     t0 = time.time()
     station = get_station_info(conn, id_estacion)
     t_info = time.time() - t0
-    
+
     if not station:
         print(f"\n\t[SKIP] No se encontró info de estación.")
         return
@@ -193,7 +218,7 @@ def _add_station_to_pdf(conn, id_estacion, year, pdf):
     t0 = time.time()
     summary = get_annual_summary(conn, id_estacion, year)
     t_summary = time.time() - t0
-    
+
     if not summary:
         print(f"\n\t[SKIP] Sin datos para el año {year}.")
         return
@@ -201,11 +226,11 @@ def _add_station_to_pdf(conn, id_estacion, year, pdf):
     t0 = time.time()
     monthly = get_monthly_data(conn, id_estacion, year)
     t_monthly = time.time() - t0
-    
+
     t0 = time.time()
     station_img = get_station_image(conn, id_estacion)
     t_img = time.time() - t0
-    
+
     t0 = time.time()
     prov_imgs = get_province_images(conn, id_estacion)
     t_prov = time.time() - t0
@@ -213,54 +238,41 @@ def _add_station_to_pdf(conn, id_estacion, year, pdf):
     t0 = time.time()
     wind_rose = get_wind_rose_10min(conn, id_estacion, year)
     t_wind = time.time() - t0
-    
-    t_db_total = time.time() - t_start_db
-    print(f"\n\t- Leer BD ({t_db_total:.1f}s)", end="", flush=True)
-    print(f"\n\t\t. Info estación: {t_info:.1f}s", end="", flush=True)
-    print(f"\n\t\t. Resumen anual: {t_summary:.1f}s", end="", flush=True)
-    print(f"\n\t\t. Datos mensuales: {t_monthly:.1f}s", end="", flush=True)
-    print(f"\n\t\t. Imagen estación: {t_img:.1f}s", end="", flush=True)
-    print(f"\n\t\t. Mapas/Provincia: {t_prov:.1f}s", end="", flush=True)
-    print(f"\n\t\t. Rosa vientos (10min): {t_wind:.1f}s", end="", flush=True)
 
-    # Inyectar datos de viento en monthly (para la gráfica) y en summary (para las tablas PDF)
-    monthly["wind_rose"] = wind_rose
-    summary["wind_summary"] = monthly.get("wind_summary", {})
+    t_db = time.time() - t_start_db
+    print(f"\n\t- BD ({t_db:.1f}s): info={t_info:.1f} summ={t_summary:.1f} "
+          f"monthly={t_monthly:.1f} img={t_img:.1f} prov={t_prov:.1f} wind={t_wind:.1f}",
+          end="", flush=True)
 
     # 2. Generar gráficas
     t0 = time.time()
-    g1 = chart_temperaturas(monthly)
-    g2 = chart_precipitacion(monthly)
-    g3 = chart_humedad_insolacion(monthly)
-
-    # Solo generamos la rosa si hay datos clasificados
-    has_wind = wind_rose.get("n_total", 0) > 0
-    if has_wind:
-        g4 = chart_rosa_vientos(monthly)
-    else:
-        g4 = None
-        
-    charts = {'g1': g1, 'g2': g2, 'g3': g3, 'g4': g4}
+    charts = {}
+    charts['g1'] = chart_temperaturas(monthly)
+    charts['g2'] = chart_precipitacion(monthly)
+    charts['g3'] = chart_humedad_insolacion(monthly)
+    charts['g4'] = chart_rosa_vientos(wind_rose) if wind_rose else None
     t_charts = time.time() - t0
-    print(f"\n\t- Crear gráficas ({t_charts:.1f}s)", end="", flush=True)
+    print(f"\n\t- Gráficas ({t_charts:.1f}s)", end="", flush=True)
 
-    # 3. Montar página PDF
+    # 3. Montar PDF
     t0 = time.time()
     pdf.add_station_page(
         station_info=station,
-        annual_summary=summary,
+        annual_summary={**summary, "wind_summary": wind_rose} if wind_rose else summary,
         charts_io=charts,
         station_image_bytes=station_img,
         province_images=prov_imgs,
     )
     t_pdf = time.time() - t0
     print(f"\n\t- Montar página PDF ({t_pdf:.1f}s)", end="", flush=True)
-    
+
     # Liberar memoria de los buffers de las gráficas
     for buf in charts.values():
         if buf:
             buf.close()
 
+
+# ─── CLI principal ────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
@@ -327,7 +339,6 @@ def main():
             elif args.mensual and not args.estacion:
                 # Modo: solo resumen mensual
                 from mensual_data import load_all_mensual
-                from config import DOCS_DIR
                 csv_dir = os.path.join(DOCS_DIR, "csv", str(year))
                 os.makedirs(OUTPUT_DIR, exist_ok=True)
                 output_path = os.path.join(OUTPUT_DIR, f"Mensual_{year}.pdf")
@@ -418,14 +429,17 @@ def main():
                 finally:
                     conn.close()
             else:
-                # Generación masiva: Portada + Índice + Coordenadas + Tablas + Fichas + Glosario
+                # ══════════════════════════════════════════════════════
+                # Generación masiva: Portada + Índice + Coord + Tablas
+                #   + Mensual + Fichas + Glosario
+                # ══════════════════════════════════════════════════════
                 from data_queries import (
                     get_connection, get_active_stations_ordered,
                     get_coordenadas_estaciones, get_station_info,
                 )
                 conn = get_connection()
                 try:
-                    # Estaciones activas en el año solicitado, ordenadas por Provincia y NombreCorto
+                    # Estaciones activas, ordenadas por Provincia y NombreCorto
                     stations = get_active_stations_ordered(conn, year)
                     print("=" * 50)
                     print(f"  GENERACIÓN MASIVA - AÑO {year}")
@@ -452,39 +466,42 @@ def main():
                     pdf = FichaEstacionPDF(temp_content, start_page=content_start)
                     toc_entries = []
 
-                    # ── 1. Coordenadas ────────────────────────────────────
+                    # ── 1. Coordenadas ──────────────────────────────────
                     print("\n[Coordenadas] Generando..." , flush=True)
+                    coord_cover_pg = pdf.current_page
+                    pdf.add_section_cover("COORDENADAS DAS ESTACIÓNS")
                     coord_data = get_coordenadas_estaciones(conn, year)
                     coord_prov_pages = pdf.add_coordenadas_pages(coord_data)
                     toc_entries.append({'level': 0, 'title': 'Coordenadas das Estacións',
-                                        'page': min(coord_prov_pages.values())})
+                                        'page': coord_cover_pg})
                     for prov, ppage in coord_prov_pages.items():
                         toc_entries.append({'level': 1, 'title': prov, 'page': ppage})
                     print(f"  [OK] págs {content_start}-{pdf.current_page - 1}")
 
-                    # ── 2. Tablas ───────────────────────────────────────
+                    # ── 2. Resumo por variable ─────────────────────────
                     from tablas_queries import get_tablas_data
-                    print("\n[Tablas] Generando..." , flush=True)
+                    print("\n[Resumo por variable] Generando..." , flush=True)
+                    tablas_cover_pg = pdf.current_page
+                    pdf.add_section_cover("RESUMO POR VARIABLE")
                     tablas_data = get_tablas_data(conn, year)
                     tablas_sec_pages = pdf.add_tablas_pages(tablas_data)
-                    tablas_start_pg  = tablas_sec_pages[0][1] if tablas_sec_pages else pdf.current_page
-                    toc_entries.append({'level': 0, 'title': 'Datos por Parámetro',
-                                        'page': tablas_start_pg})
+                    toc_entries.append({'level': 0, 'title': 'Resumo por variable',
+                                        'page': tablas_cover_pg})
                     for sec_title, sec_page in tablas_sec_pages:
                         toc_entries.append({'level': 1, 'title': sec_title, 'page': sec_page})
                     print(f"  [OK] {len(tablas_sec_pages)} secciones generadas")
 
-                    # ── 3. Resumos mensuales ─────────────────────────
+                    # ── 3. Resumos mensuais ─────────────────────────
                     from mensual_data import load_all_mensual
-                    from config import DOCS_DIR
                     csv_dir = os.path.join(DOCS_DIR, "csv", str(year))
                     print(f"\n[Mensual] Xerando desde {csv_dir}...", flush=True)
                     all_months = load_all_mensual(csv_dir, year)
                     if all_months:
+                        mensual_cover_pg = pdf.current_page
+                        pdf.add_section_cover("RESUMOS MENSUAIS")
                         mensual_pages = pdf.add_mensual_pages(all_months)
-                        mensual_start = mensual_pages[0][1] if mensual_pages else pdf.current_page
-                        toc_entries.append({'level': 0, 'title': 'Resumos Mensuales',
-                                            'page': mensual_start})
+                        toc_entries.append({'level': 0, 'title': 'Resumos Mensuais',
+                                            'page': mensual_cover_pg})
                         for ml, mp in mensual_pages:
                             toc_entries.append({'level': 1, 'title': ml, 'page': mp})
                         print(f"  [OK] {len(all_months)} meses xerados")
@@ -492,6 +509,24 @@ def main():
                         print("  [WARN] Non se atoparon CSVs mensuales")
 
                     # ── 4. Fichas ───────────────────────────────────────
+                    fichas_cover_pg  = pdf.current_page
+                    pdf.add_section_cover("RESUMO POR ESTACIÓN")
+
+                    # Insertar ficha_estacion.pdf (guía de lectura)
+                    ficha_ext_path = os.path.join(DOCS_DIR, "ficha_estacion.pdf")
+                    ficha_ext_pages = 0
+                    ficha_ext_start = pdf.current_page
+                    if os.path.exists(ficha_ext_path):
+                        try:
+                            from pypdf import PdfReader as _PR
+                        except ImportError:
+                            from PyPDF2 import PdfReader as _PR
+                        ficha_ext_pages = len(_PR(ficha_ext_path).pages)
+                        pdf.current_page += ficha_ext_pages
+                        print(f"  [Ficha explicativa] {ficha_ext_pages} páxs de {ficha_ext_path}")
+                        toc_entries.append({'level': 1, 'title': 'Guía de lectura',
+                                            'page': ficha_ext_start})
+
                     fichas_start_pg  = pdf.current_page
                     fichas_prov_pages = {}   # {provincia: primera_pagina}
                     total_start_time = time.time()
@@ -519,8 +554,8 @@ def main():
                         print(f"\n[!] Error crítico: {e}")
 
                     # Añadir fichas al TOC
-                    toc_entries.append({'level': 0, 'title': 'Fichas de Estacións',
-                                        'page': fichas_start_pg})
+                    toc_entries.append({'level': 0, 'title': 'Resumo por estación',
+                                        'page': fichas_cover_pg})
                     from config import COORD_PROVINCIAS
                     for prov in COORD_PROVINCIAS:
                         if prov in fichas_prov_pages:
@@ -528,12 +563,13 @@ def main():
                                                 'page': fichas_prov_pages[prov]})
 
                     # ── 5. Glosario ────────────────────────────────────
-                    glosario_start = pdf.current_page
+                    glosario_cover_pg = pdf.current_page
+                    pdf.add_section_cover("GLOSARIO DE TERMOS METEOROLÓXICOS")
                     print("\n[Glosario] Xerando...", flush=True)
                     pdf.add_glosario_pages()
                     toc_entries.append({'level': 0, 'title': 'Glosario de Termos Meteorolóxicos',
-                                        'page': glosario_start})
-                    print(f"  [OK] págs {glosario_start}-{pdf.current_page - 1}")
+                                        'page': glosario_cover_pg})
+                    print(f"  [OK] págs {glosario_cover_pg}-{pdf.current_page - 1}")
 
                     # Guardar contenido
                     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Guardando contenido...",
@@ -547,9 +583,21 @@ def main():
                     indice_pdf.add_indice_pages(toc_entries, year)
                     indice_pdf.save()
 
-                    # ── 7. Fusionar: portada + índice + contenido ──────────
+                    # ── 7. Fusionar: portada + índice + contenido (con inserción) ──
                     print("\n[Merge] Fusionando PDFs...", flush=True)
-                    _merge_pdfs([temp_portada, temp_indice, temp_content], final_output)
+
+                    # Calcular posición de inserción de ficha_estacion.pdf
+                    insertions = []
+                    if ficha_ext_pages > 0 and os.path.exists(ficha_ext_path):
+                        offset_in_content = fichas_cover_pg - content_start  # 0-based
+                        pages_portada = 1
+                        pages_indice  = INDICE_PAGES
+                        insert_at = pages_portada + pages_indice + offset_in_content + 1
+                        insertions.append((insert_at, ficha_ext_path))
+                        print(f"  [Inserción] ficha_estacion.pdf en posición {insert_at}")
+
+                    _merge_pdfs([temp_portada, temp_indice, temp_content],
+                                final_output, insertions=insertions)
 
                     # Limpiar temporales
                     for tmp in (temp_portada, temp_indice, temp_content):

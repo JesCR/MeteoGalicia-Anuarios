@@ -159,6 +159,22 @@ class FichaEstacionPDF:
         self.c.showPage()
         self.current_page += 1
 
+    # ─── Portada de sección ──────────────────────────────────────────
+
+    def add_section_cover(self, title):
+        """
+        Genera una página de portada de sección: título centrado
+        sobre fondo blanco, sin header ni footer con nº de página.
+        La página SÍ se cuenta (current_page se incrementa).
+        """
+        c = self.c
+        c.setFillColor(black)
+        c.setFont("Helvetica-Bold", 22)
+        # Ligeramente por encima del centro vertical
+        c.drawCentredString(PAGE_W / 2, PAGE_H / 2 + 30, title)
+        c.showPage()
+        self.current_page += 1
+
     # ─── Página de Portada ────────────────────────────────────────────
 
     def add_portada_page(self, year):
@@ -1048,6 +1064,13 @@ class FichaEstacionPDF:
         c.setFont("Helvetica", 9)
         c.drawString(TEXT_X + 42, y, f"{alt_str} m")
 
+        # Nota estación colaboradora
+        id_est = info.get("idEstacion", 0)
+        if 10500 <= id_est <= 10600:
+            y -= line_gap_small
+            c.setFont("Helvetica-Oblique", 8)
+            c.setFillColor(Color(0.4, 0.4, 0.4))
+            c.drawString(TEXT_X, y, "* Estación colaboradora")
 
     def _draw_station_photo(self, image_bytes):
         """Foto de la estación."""
