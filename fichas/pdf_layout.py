@@ -252,7 +252,7 @@ class FichaEstacionPDF:
         # Subtítulo
         c.setFont("Helvetica", 11)
         c.drawCentredString(PAGE_W / 2, sep_y - 95,
-                            "Consellería de Medio Ambiente, Territorio e Infraestruturas")
+                            "Consellería de Medio Ambiente e Cambio Climático")
 
         # ── 3. Pie blanco con fecha ───────────────────────────────────
         fecha = datetime.now().strftime("%d/%m/%Y")
@@ -334,7 +334,7 @@ class FichaEstacionPDF:
             c.setFillColor(black)
             c.setFont("Helvetica", 6.5)
             c.drawString(LM, LH - 48,
-                         "Consellería de Medio Ambiente, Territorio e Infraestruturas - Xunta de Galicia")
+                         "Consellería de Medio Ambiente e Cambio Climático - Xunta de Galicia")
 
             # Título centrado
             c.setFont("Helvetica-Bold", 11)
@@ -1009,7 +1009,7 @@ class FichaEstacionPDF:
         c.setFillColor(black)
         c.setFont("Helvetica", TEXT_XUNTA_FONT_SIZE)
         text_y = MAIN_HEADER_Y - LOGO_H - 10
-        text_xunta = "Consellería de Medio Ambiente, Territorio e Infraestruturas - Xunta de Galicia"
+        text_xunta = "Consellería de Medio Ambiente e Cambio Climático - Xunta de Galicia"
         c.drawString(MARGIN_LEFT, text_y, text_xunta)
         
         # Línea decorativa opcional o separación
@@ -1193,12 +1193,12 @@ class FichaEstacionPDF:
         """Dibuja tablas de velocidades y direcciones a la derecha de la rosa."""
         c = self.c
         if not ws: return
-        
+
         from config import WIND_SECTORS
-        
+
         y_top = WT_Y + ROW4_H - 10
         row_h = 13
-        
+
         # 1. Tabla de Velocidades Promedio (VXX)
         curr_y = y_top
         c.setFont("Helvetica-Bold", 8.5)
@@ -1206,7 +1206,7 @@ class FichaEstacionPDF:
         c.drawString(WT_X, curr_y, "VELOCIDADES MEDIAS")
         c.drawString(WT_X, curr_y - 11, "POR SECTOR (km/h)")
         curr_y -= 28
-        
+
         c.setFont("Helvetica", 8)
         speeds = ws.get("velocidades", {})
         for sec in WIND_SECTORS:
@@ -1214,7 +1214,7 @@ class FichaEstacionPDF:
             c.drawString(WT_X + 5, curr_y, f"{sec}:")
             c.drawRightString(WT_X + 75, curr_y, f"{val:.1f}")
             curr_y -= row_h
-            
+
         # 2. Tabla de Direcciones Promedio (DXX)
         curr_y = y_top
         tab2_x = WT_X + 130 # Ajustamos un poco para centrar bajo los dos bloques
@@ -1222,7 +1222,7 @@ class FichaEstacionPDF:
         c.drawString(tab2_x, curr_y, "DIRECCIÓN MEDIA")
         c.drawString(tab2_x, curr_y - 11, "POR SECTOR (º)")
         curr_y -= 28
-        
+
         c.setFont("Helvetica", 8)
         dirs = ws.get("direcciones", {})
         for sec in WIND_SECTORS:
@@ -1230,3 +1230,14 @@ class FichaEstacionPDF:
             c.drawString(tab2_x + 5, curr_y, f"{sec}:")
             c.drawRightString(tab2_x + 65, curr_y, f"{val:.1f}")
             curr_y -= row_h
+
+        # 3. Nota de altura 2 m (idAltura = 7) — al nivel del texto "Calmas"
+        if ws.get("wind_altura_id") == 7:
+            nota_y = WT_Y + 5          # misma zona que "Calmas:" bajo la rosa
+            nota_x = WT_X
+            nota_w = PAGE_W - MARGIN_RIGHT - nota_x
+            c.setFont("Helvetica-Oblique", 6.5)
+            c.setFillColor(Color(0.35, 0.35, 0.35))
+            c.drawString(nota_x, nota_y,
+                         "* Vento medido a 2 m, non representativo para a tramitación de reclamacións")
+            c.setFillColor(black)

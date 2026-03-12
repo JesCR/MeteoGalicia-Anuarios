@@ -238,10 +238,12 @@ def _add_station_to_pdf(conn, id_estacion, year, pdf):
     t0 = time.time()
     wind_rose = get_wind_rose_10min(conn, id_estacion, year)
     t_wind = time.time() - t0
+    n_total_wind = wind_rose.get("n_total", 0)
 
     t_db = time.time() - t_start_db
     print(f"\n\t- BD ({t_db:.1f}s): info={t_info:.1f} summ={t_summary:.1f} "
-          f"monthly={t_monthly:.1f} img={t_img:.1f} prov={t_prov:.1f} wind={t_wind:.1f}",
+          f"monthly={t_monthly:.1f} img={t_img:.1f} prov={t_prov:.1f} "
+          f"wind={t_wind:.1f} (n={n_total_wind})",
           end="", flush=True)
 
     # 2. Generar gráficas
@@ -250,15 +252,22 @@ def _add_station_to_pdf(conn, id_estacion, year, pdf):
     charts['g1'] = chart_temperaturas(monthly)
     charts['g2'] = chart_precipitacion(monthly)
     charts['g3'] = chart_humedad_insolacion(monthly)
-    charts['g4'] = chart_rosa_vientos(wind_rose) if wind_rose else None
+
+    # chart_rosa_vientos espera un dict con clave 'wind_rose'
+    has_wind = n_total_wind > 0
+    charts['g4'] = chart_rosa_vientos({"wind_rose": wind_rose}) if has_wind else None
+
     t_charts = time.time() - t0
     print(f"\n\t- Gráficas ({t_charts:.1f}s)", end="", flush=True)
 
     # 3. Montar PDF
     t0 = time.time()
+    # Fusionamos wind_altura_id del wind_rose dentro del wind_summary
+    # para que _draw_wind_tables pueda acceder al idAltura del sensor
+    ws_for_pdf = {**wind_rose, **monthly.get("wind_summary", {})} if has_wind else {}
     pdf.add_station_page(
         station_info=station,
-        annual_summary={**summary, "wind_summary": wind_rose} if wind_rose else summary,
+        annual_summary={**summary, "wind_summary": ws_for_pdf} if has_wind else summary,
         charts_io=charts,
         station_image_bytes=station_img,
         province_images=prov_imgs,

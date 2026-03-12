@@ -485,8 +485,7 @@ def get_wind_rose_10min(conn, id_estacion, year):
     """
     Calcula la rosa de vientos desde datos 10-minutales.
     Usa queries optimizadas: primero resuelve idMedida de VV y DV,
-    luego obtiene los pares de datos con un JOIN directo.
-    Clasifica por sector (8) e intensidad (4 clases).
+    luego clasifica directamente en SQL por sector (8) e intensidad (4 clases).
     Normalización Opción A: rosa solo vientos, calmas aparte.
     """
     sectors = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
@@ -499,7 +498,7 @@ def get_wind_rose_10min(conn, id_estacion, year):
 
     # 1. Obtener idMedida para VV (vel.) y DV (dir.)
     sql_medidas = """
-    SELECT idMedida, Parametro
+    SELECT idMedida, Parametro, idAltura
     FROM dbo.VIDX_AyudaMedidas_NOEXPAND
     WHERE idEstacion = ?
       AND idParametro IN (81, 82)
@@ -507,87 +506,105 @@ def get_wind_rose_10min(conn, id_estacion, year):
       AND idTipoIntervalo = 1
       AND idFuncion = 1
     """
-    rows = conn.execute(sql_medidas, id_estacion).fetchall()
+    rows = conn.execute(sql_medidas, (id_estacion,)).fetchall()
 
     id_vv = None
     id_dv = None
+    altura_vv = None
     for r in rows:
         p = r.Parametro.strip()
         if p == 'VV':
             id_vv = r.idMedida
+            altura_vv = r.idAltura
         elif p == 'DV':
             id_dv = r.idMedida
 
     if not id_vv or not id_dv:
         return empty
 
-    # 2. Obtener pares VV/DV con JOIN directo por InstanteLectura
+    # 2. Clasificar directamente en SQL — devuelve máximo 33 filas (32 celdas + calmas)
+    #    en lugar de traer todos los datos en bruto a Python.
     start_date = f"{year}-01-01"
-    end_date = f"{year + 1}-01-01"
+    end_date   = f"{year + 1}-01-01"
 
     sql_data = """
-    SELECT VV.Valor AS vv, DV.Valor AS dv
+    SELECT
+        CASE
+            WHEN VV.Valor < 1.5   THEN 'CALMA'
+            WHEN VV.Valor <= 5.5  THEN 'frouxos'
+            WHEN VV.Valor <= 11.5 THEN 'moderados'
+            WHEN VV.Valor <= 19.5 THEN 'fortes'
+            ELSE 'moi_fortes'
+        END AS clase,
+        CASE
+            WHEN VV.Valor < 1.5                                      THEN 'CALMA'
+            WHEN DV.Valor >= 338 OR DV.Valor < 23 OR DV.Valor = 360 THEN 'N'
+            WHEN DV.Valor >= 23  AND DV.Valor < 68                   THEN 'NE'
+            WHEN DV.Valor >= 68  AND DV.Valor < 113                  THEN 'E'
+            WHEN DV.Valor >= 113 AND DV.Valor < 158                  THEN 'SE'
+            WHEN DV.Valor >= 158 AND DV.Valor < 203                  THEN 'S'
+            WHEN DV.Valor >= 203 AND DV.Valor < 248                  THEN 'SO'
+            WHEN DV.Valor >= 248 AND DV.Valor < 293                  THEN 'O'
+            WHEN DV.Valor >= 293 AND DV.Valor < 338                  THEN 'NO'
+            ELSE 'CALMA'
+        END AS sector,
+        COUNT(*) AS n
     FROM dbo.Datos10minutales VV
     INNER JOIN dbo.Datos10minutales DV
         ON VV.InstanteLectura = DV.InstanteLectura
     WHERE VV.lnMedida = ? AND DV.lnMedida = ?
-      AND VV.InstanteLectura > ? AND VV.InstanteLectura <= ?
+      AND VV.InstanteLectura >= ? AND VV.InstanteLectura < ?
       AND VV.lnCodigoValidacion IN (1, 5)
       AND DV.lnCodigoValidacion IN (1, 5)
+      AND VV.Valor >= 0
       AND VV.Valor <> -9999
       AND DV.Valor <> -9999
+    GROUP BY
+        CASE
+            WHEN VV.Valor < 1.5   THEN 'CALMA'
+            WHEN VV.Valor <= 5.5  THEN 'frouxos'
+            WHEN VV.Valor <= 11.5 THEN 'moderados'
+            WHEN VV.Valor <= 19.5 THEN 'fortes'
+            ELSE 'moi_fortes'
+        END,
+        CASE
+            WHEN VV.Valor < 1.5                                      THEN 'CALMA'
+            WHEN DV.Valor >= 338 OR DV.Valor < 23 OR DV.Valor = 360 THEN 'N'
+            WHEN DV.Valor >= 23  AND DV.Valor < 68                   THEN 'NE'
+            WHEN DV.Valor >= 68  AND DV.Valor < 113                  THEN 'E'
+            WHEN DV.Valor >= 113 AND DV.Valor < 158                  THEN 'SE'
+            WHEN DV.Valor >= 158 AND DV.Valor < 203                  THEN 'S'
+            WHEN DV.Valor >= 203 AND DV.Valor < 248                  THEN 'SO'
+            WHEN DV.Valor >= 248 AND DV.Valor < 293                  THEN 'O'
+            WHEN DV.Valor >= 293 AND DV.Valor < 338                  THEN 'NO'
+            ELSE 'CALMA'
+        END
     """
-    rows = conn.execute(sql_data, id_vv, id_dv, start_date, end_date).fetchall()
+    rows = conn.execute(sql_data, (id_vv, id_dv, start_date, end_date)).fetchall()
 
-    n_total = len(rows)
-    if n_total == 0:
+    if not rows:
         return empty
 
-    # 3. Clasificar cada registro
-    n_calm = 0
-    N = [[0] * 4 for _ in range(8)]  # 8 sectores x 4 clases
+    # 3. Montar matriz desde las filas agrupadas (máximo ~33 filas)
+    n_total = sum(r.n for r in rows)
+    n_calm  = sum(r.n for r in rows if r.sector == 'CALMA')
+    n_wind  = n_total - n_calm
 
+    # Inicializar matriz a cero
+    N = {s: {c: 0 for c in classes} for s in sectors}
     for r in rows:
-        vv = float(r.vv)
-        dv = float(r.dv) % 360  # Normalizar a [0, 360)
-
-        if vv < 0:
+        if r.sector == 'CALMA' or r.clase == 'CALMA':
             continue
+        if r.sector in N and r.clase in N[r.sector]:
+            N[r.sector][r.clase] += r.n
 
-        # Calma
-        if vv < 1.5:
-            n_calm += 1
-            continue
-
-        # Sector
-        if dv >= 338 or dv < 23:      sector = 0  # N
-        elif 23 <= dv < 68:           sector = 1  # NE
-        elif 68 <= dv < 113:          sector = 2  # E
-        elif 113 <= dv < 158:         sector = 3  # SE
-        elif 158 <= dv < 203:         sector = 4  # S
-        elif 203 <= dv < 248:         sector = 5  # SO
-        elif 248 <= dv < 293:         sector = 6  # O
-        elif 293 <= dv < 338:         sector = 7  # NO
-        else:
-            continue
-
-        # Clase de intensidad (m/s)
-        if vv <= 5.5:                 clase = 0  # Frouxo
-        elif vv <= 11.5:              clase = 1  # Moderado
-        elif vv <= 19.5:              clase = 2  # Forte
-        else:                         clase = 3  # Moi forte
-
-        N[sector][clase] += 1
-
-    # 4. Normalizar – Opción A: rosa sobre n_wind, calmas sobre n_total
-    n_wind = n_total - n_calm
-
+    # 4. Normalizar — rosa sobre n_wind, calmas sobre n_total
     matrix = {}
-    for si, sec in enumerate(sectors):
+    for sec in sectors:
         matrix[sec] = {}
-        for ci, cls in enumerate(classes):
+        for cls in classes:
             if n_wind > 0:
-                matrix[sec][cls] = round(100.0 * N[si][ci] / n_wind, 2)
+                matrix[sec][cls] = round(100.0 * N[sec][cls] / n_wind, 2)
             else:
                 matrix[sec][cls] = 0.0
 
@@ -597,7 +614,9 @@ def get_wind_rose_10min(conn, id_estacion, year):
         "matrix": matrix,
         "calmas_pct": calmas_pct,
         "n_total": n_total,
+        "wind_altura_id": altura_vv,   # idAltura del sensor VV (7 = 2m, 9 = 10m)
     }
+
 
 
 def get_coordenadas_estaciones(conn, year):
