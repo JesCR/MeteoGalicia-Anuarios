@@ -1034,10 +1034,25 @@ class FichaEstacionPDF:
         # Concello y Provincia
         concello  = info.get("Concello", "").upper()
         provincia = info.get("Provincia", "")
-        prov_abbr = provincia[:2].upper() if provincia else ""
+        _PROV_ABBR = {
+            "A Coruña":   "CO",
+            "Lugo":       "LU",
+            "Ourense":    "OU",
+            "Pontevedra": "PO",
+        }
+        prov_abbr = _PROV_ABBR.get(provincia, provincia[:2].upper()) if provincia else ""
+        full_text = f"{concello} ({prov_abbr})"
         c.setFont("Helvetica-Bold", 10)
-        c.drawString(TEXT_X, y, f"{concello} ({prov_abbr})")
-        y -= line_gap_big
+        if c.stringWidth(full_text, "Helvetica-Bold", 10) <= TEXT_COL_W:
+            # Cabe en una línea
+            c.drawString(TEXT_X, y, full_text)
+            y -= line_gap_big
+        else:
+            # No cabe: concello en primera línea, (PROV) en segunda
+            c.drawString(TEXT_X, y, concello)
+            y -= line_gap_small
+            c.drawString(TEXT_X, y, f"({prov_abbr})")
+            y -= line_gap_small
 
         # Localización (negrita para la etiqueta, normal para el valor)
         lat = info.get("Lat")

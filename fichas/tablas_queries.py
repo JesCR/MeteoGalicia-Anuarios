@@ -20,8 +20,8 @@ TABLAS_SECTIONS = [
     },
     {
         'key': 'vv_max',
-        'title': 'RACHA (km/h)',
-        'note': '(* Vento medido a 2m)',
+        'title': 'REFACHO MÁXIMO (km/h)',
+        'note': '(* Refacho medido a 2m)',
         'id_parametro': 81, 'id_funcion': 2, 'id_altura': [7, 9],
         'decimals': 2, 'annual': 'MAX', 'is_viento': True, 'scale': 3.6,
     },
@@ -61,11 +61,18 @@ TABLAS_SECTIONS = [
         'decimals': 1, 'annual': 'AVG',
     },
     {
+        'key': 'hfrio',
+        'title': 'HORAS DE FRÍO (h)',
+        'note': None,
+        'id_parametro': 10063, 'id_funcion': 4, 'id_altura': 6,
+        'decimals': 1, 'annual': 'SUM', 'is_acumulado': True,
+    },
+    {
         'key': 'ndx',
         'title': 'DÍAS DE XEADA',
         'note': None,
         'id_parametro': 10119, 'id_funcion': 9, 'id_altura': 6,
-        'decimals': 0, 'annual': 'SUM',
+        'decimals': 0, 'annual': 'SUM', 'is_acumulado': True,
     },
     {
         'key': 'hr_avg',
@@ -75,18 +82,25 @@ TABLAS_SECTIONS = [
         'decimals': 1, 'annual': 'AVG',
     },
     {
+        'key': 'hf',
+        'title': 'HORAS DE HUMIDADE FOLIAR (h)',
+        'note': None,
+        'id_parametro': 9991, 'id_funcion': 4, 'id_altura': 7,
+        'decimals': 1, 'annual': 'SUM', 'is_acumulado': True,
+    },
+    {
         'key': 'pp_sum',
         'title': 'PRECIPITACIÓN (mm)',
         'note': None,
         'id_parametro': 10001, 'id_funcion': 4, 'id_altura': 6,
-        'decimals': 1, 'annual': 'SUM',
+        'decimals': 1, 'annual': 'SUM', 'is_acumulado': True,
     },
     {
         'key': 'ndpp',
         'title': 'DÍAS DE PRECIPITACIÓN',
         'note': None,
         'id_parametro': 10120, 'id_funcion': 9, 'id_altura': 6,
-        'decimals': 0, 'annual': 'SUM',
+        'decimals': 0, 'annual': 'SUM', 'is_acumulado': True,
     },
     {
         'key': 'pp_max',
@@ -100,7 +114,7 @@ TABLAS_SECTIONS = [
         'title': 'HORAS DE SOL (h)',
         'note': None,
         'id_parametro': 10006, 'id_funcion': 4, 'id_altura': 6,
-        'decimals': 1, 'annual': 'SUM',
+        'decimals': 1, 'annual': 'SUM', 'is_acumulado': True,
     },
     {
         'key': 'ins',
@@ -121,7 +135,7 @@ TABLAS_SECTIONS = [
         'title': 'BALANCE HÍDRICO (mm)',
         'note': None,
         'id_parametro': 10117, 'id_funcion': 4, 'id_altura': None,
-        'decimals': 1, 'annual': 'SUM',
+        'decimals': 1, 'annual': 'SUM', 'is_acumulado': True,
     },
 ]
 
@@ -261,10 +275,24 @@ def _query_monthly(conn, year, id_parametro, id_funcion, id_altura, ids_list):
     return result
 
 
-def _compute_annual(monthly_dict, method):
-    """Calcula valor anual desde {mes: valor}."""
+def _compute_annual(monthly_dict, method, is_acumulado=False):
+    """
+    Calcula valor anual desde {mes: valor}.
+
+    Reglas de mínimo de meses válidos para la columna Anual:
+      - Acumulados (SUM: Precipitación, Horas de sol, Balance hídrico,
+        Días de xeada, Días de precipitación): necesitan los 12 meses
+        con dato válido; de lo contrario devuelve None (→ "--").
+      - Resto de variables (AVG, MAX, MIN): necesitan al menos 10 de
+        los 12 meses con dato válido; de lo contrario devuelve None.
+    """
     vals = [v for v in monthly_dict.values() if v is not None]
-    if not vals:
+    n_valid = len(vals)
+    if n_valid == 0:
+        return None
+    # Aplicar umbral mínimo de meses
+    min_months = 12 if is_acumulado else 10
+    if n_valid < min_months:
         return None
     if method == 'SUM':
         return round(sum(vals), 2)
@@ -272,7 +300,7 @@ def _compute_annual(monthly_dict, method):
         return round(max(vals), 2)
     if method == 'MIN':
         return round(min(vals), 2)
-    return round(sum(vals) / len(vals), 2)   # AVG
+    return round(sum(vals) / n_valid, 2)   # AVG
 
 
 # ─── Función principal ────────────────────────────────────────────────────────
@@ -341,7 +369,10 @@ def get_tablas_data(conn, year):
                 # Omitir estaciones sin ningún dato para este parámetro
                 if all(v is None for v in values):
                     continue
-                annual  = _compute_annual(station_monthly, sec['annual'])
+                annual  = _compute_annual(
+                    station_monthly, sec['annual'],
+                    is_acumulado=sec.get('is_acumulado', False),
+                )
 
                 rows.append({'name': name, 'values': values, 'annual': annual})
             section_prov_data[prov] = rows
